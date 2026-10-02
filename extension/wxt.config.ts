@@ -30,6 +30,15 @@ export default defineConfig({
     // §3.1 权限声明 —— 逐字对齐，不做增删
     permissions: ['storage', 'downloads', 'scripting', 'activeTab'],
     host_permissions: ['http://127.0.0.1/*', 'http://*/*', 'https://*/*'],
+    // content script 在页面上下文里引用扩展内资源（悬浮球 / 面板的 brand logo）
+    // 必须显式放行，否则 Chrome 会以 ERR_FAILED 拒载（e2e 探针实测发现）。
+    // 仅暴露自己的 icon 目录，不放宽其他资源。
+    web_accessible_resources: [
+      {
+        resources: ['icon/*'],
+        matches: ['http://*/*', 'https://*/*'],
+      },
+    ],
     action: {
       default_title: '喵译 MiaoTrans',
       default_icon: {

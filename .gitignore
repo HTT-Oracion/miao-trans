@@ -22,3 +22,9 @@ mock-service/state/
 !.vscode/settings.json
 .idea/
 coverage/
+
+# e2e 运行产物
+e2e/*.png
+
+# e2e 运行产物
+e2e/*.png

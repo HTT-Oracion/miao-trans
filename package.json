@@ -13,7 +13,7 @@
     "compile": "npm --prefix extension run compile",
     "test": "npm --prefix extension run test",
     "mock": "node mock-service/src/server.mjs",
-    "page": "node e2e/serve-page.mjs",
+    "page": "node mock-service/src/page.mjs",
     "verify": "node e2e/verify.mjs"
   },
   "engines": {

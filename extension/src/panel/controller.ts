@@ -105,6 +105,8 @@ export function usePanelController(
     lastEventId: string | null;
     /** 事件流当前是否连着（background 的 `onOpen`/`onError` 推送） */
     eventsConnected: boolean;
+    /** 漫画名 —— 提交守卫的唯一数据源（与按钮 disabled 判断同源，见 comicNameRef 注释） */
+    comicName: string;
   },
 ): PanelController {
   const [expanded, setExpanded] = useState(true);
@@ -358,6 +360,17 @@ export function usePanelController(
   selectedKeysRef.current = mirror.selectedKeys;
   const failedSeqsRef = useRef<number[]>(mirror.failedSeqs);
   failedSeqsRef.current = mirror.failedSeqs;
+  /**
+   * 漫画名的镜像。
+   *
+   * **缺陷修复记录**：此前 onSubmit 读的是 `ctx.current.comicName`，而该字段只在
+   * doSubmit 成功路径里才被赋值 —— 用户填了名字也永远过不了提交守卫（首次提交
+   * 必被「请填写漫画名」拦下）。根因是两个数据源不一致：按钮 disabled 判断读
+   * Redux（有值 → 可点），提交守卫读 ctx（空 → 拦截）。现在统一走 mirror，
+   * 与 selectedKeys 同一模式。
+   */
+  const comicNameRef = useRef<string>(mirror.comicName);
+  comicNameRef.current = mirror.comicName;
   useEffect(() => {
     const dispose = installRouteWatcher((info) => {
       const selected = selectedKeysRef.current;
@@ -429,7 +442,8 @@ export function usePanelController(
   // ── 提交 ──
   const onSubmit = useCallback(async () => {
     const keys = selectedKeysRef.current;
-    const check = checkComicName(ctx.current.comicName);
+    const comicName = comicNameRef.current;
+    const check = checkComicName(comicName);
     const decision = decideSubmit({ selectedCount: keys.length, comicNameOk: check.ok });
     if (decision.kind === 'block') {
       // 超限 → 拦截且**不发网络请求**，给出两个动作（《01》§5.1）
@@ -437,7 +451,7 @@ export function usePanelController(
       else setNotice(decision.message);
       return;
     }
-    await doSubmit(keys, ctx.current.comicName);
+    await doSubmit(keys, comicName);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dispatch]);
 

@@ -67,6 +67,7 @@ export function Panel({ dispatch, serviceReady, progressRatio }: PanelProps) {
     clientState: batch.state,
     lastEventId,
     eventsConnected,
+    comicName: batch.comicName,
   });
   const caps = capabilitiesOf(batch.state);
   const state: ClientState = batch.state;
@@ -311,7 +312,13 @@ export function Panel({ dispatch, serviceReady, progressRatio }: PanelProps) {
                 type="button"
                 className="mt-primarybtn"
                 data-testid="submit-button"
-                disabled={ctl.busy || decision.kind === 'block'}
+                /**
+                 * disabled 口径（《01》§5.1）：empty / name-missing 直接锁死（没有可做的
+                 * 动作）；**over-limit 不锁** —— 硬拦的定义是「拦截网络请求 + 给出两个
+                 * 动作」，把按钮 disabled 会让裁剪/分批弹层永远不可达（e2e 实测发现的
+                 * 缺陷）。点击由 onSubmit 转为打开超限弹层，同样不发任何请求。
+                 */
+                disabled={ctl.busy || (decision.kind === 'block' && decision.reason !== 'over-limit')}
                 onClick={() => void ctl.onSubmit()}
               >
                 {state === 'submitting' ? '提交中…' : decision.kind === 'block' && decision.reason === 'over-limit' ? '超出上限' : '确定'}
