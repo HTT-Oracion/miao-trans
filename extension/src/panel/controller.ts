@@ -15,6 +15,7 @@ import type { ItemDto, QueueDto, SseEnvelope, TaskCreatedDto, TaskDto } from '..
 import { BoxServiceError, SSE_STALE_MS, SSE_WATCHDOG_TICK_MS } from '../types/contract';
 import type { BgPush, BgRequest, BgResponse } from '../types/messages';
 import { isActive, type ClientState } from '../domain/clientState';
+import { DEMO_BYPASS_SERVICE_READY } from '../domain/demoMode';
 import { collectOrderedImages, type PageImage } from '../collectImages';
 import { registry } from '../store/registry';
 import { batchActions } from '../store/translation/batchSlice';
@@ -144,15 +145,32 @@ export function usePanelController(
   // ── 启动：探测服务 + 恢复进行中任务（P0-3） ──
   useEffect(() => {
     void (async () => {
+      let discovered: { ready: boolean; port: number | null; hasToken: boolean } | null = null;
       try {
-        const data = await sendBg<{ ready: boolean; port: number | null; hasToken: boolean }>({
+        discovered = await sendBg<{ ready: boolean; port: number | null; hasToken: boolean }>({
           type: 'SERVICE_DISCOVER',
         });
-        dispatch(
-          batchActions.serviceDiscovered({ port: data.port ?? 0, hasToken: data.hasToken, ready: data.ready && data.hasToken }),
-        );
-        if (!data.hasToken) setTokenDialogOpen(true);
       } catch {
+        discovered = null;
+      }
+
+      /**
+       * 演示模式（见 domain/demoMode.ts）：**仅当服务确实不在**时放开渲染门控
+       * （ready/hasToken 强制为 true、跳过任务恢复），让整体 UI 无后端也可预览。
+       * 刻意不做「无条件跳过」—— mock / 真实服务在场时必须走原路径，
+       * 否则令牌配对引导（e2e C1）和 P0-3 任务恢复都会被跳过。
+       */
+      if (DEMO_BYPASS_SERVICE_READY && (!discovered || !discovered.ready)) {
+        dispatch(batchActions.serviceDiscovered({ port: 0, hasToken: true, ready: true }));
+        return;
+      }
+
+      if (discovered) {
+        dispatch(
+          batchActions.serviceDiscovered({ port: discovered.port ?? 0, hasToken: discovered.hasToken, ready: discovered.ready && discovered.hasToken }),
+        );
+        if (!discovered.hasToken) setTokenDialogOpen(true);
+      } else {
         dispatch(batchActions.serviceLost());
       }
 
@@ -629,6 +647,11 @@ export function usePanelController(
       const data = await sendBg<{ ready: boolean; port: number | null; hasToken: boolean }>({
         type: 'SERVICE_DISCOVER',
       });
+      // 演示模式：服务确实不在时维持「已就绪」假象（与启动探测同一裁定）
+      if (DEMO_BYPASS_SERVICE_READY && !(data.ready && data.hasToken)) {
+        dispatch(batchActions.serviceDiscovered({ port: 0, hasToken: true, ready: true }));
+        return;
+      }
       dispatch(
         batchActions.serviceDiscovered({
           port: data.port ?? 0,
@@ -637,6 +660,10 @@ export function usePanelController(
         }),
       );
     } catch {
+      if (DEMO_BYPASS_SERVICE_READY) {
+        dispatch(batchActions.serviceDiscovered({ port: 0, hasToken: true, ready: true }));
+        return;
+      }
       dispatch(batchActions.serviceLost());
     }
   }, [dispatch]);

@@ -45,6 +45,17 @@ npm run verify       # 端到端验收（自动起 mock + 夹具 + 扩展浏览�
 a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90
 ```
 
+## 演示模式（临时 —— 后端就绪后移除）
+
+Box 后端尚未开发。`extension/src/domain/demoMode.ts` 的 `DEMO_BYPASS_SERVICE_READY = true`
+会在**探测不到本地服务**时放开渲染门控：面板不再被「服务未就绪」浮层盖住、不弹配对引导，
+无需启动任何服务即可预览插件整体（悬浮球 → 展开 → 扫描 → 勾选 → 分页 → 超限拦截等）。
+
+- 仅在服务缺席时生效；mock / 真实服务在场时行为完全不变（`npm run verify` 27 项不受影响）。
+- 提交 / 回写仍走真实请求，无服务时会进入失败态（这也是 UI 的一部分）。
+- 无服务场景的回归探针：`cd extension && node e2e/noservice-probe.mjs`（8 项断言）。
+- 后端就绪后：把常量改回 `false` 或删除该文件，并删除 `e2e/noservice-probe.mjs`。
+
 ## 验收基线（ver1.0 迭代完成时）
 
 | 项 | 结果 |
