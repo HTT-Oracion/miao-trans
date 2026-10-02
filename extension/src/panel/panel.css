@@ -188,6 +188,18 @@
   gap: 10px;
   padding: 0 14px;
   border-bottom: 1px solid var(--mt-line-soft);
+  /* 面板头是拖动把手（《01》§6.2 本轮修订）：可拖、不选中文字、触屏不滚页 */
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+/* 头里的按钮/输入保持自己的光标语义，别跟着变抓手 */
+.mt-panel__header button,
+.mt-panel__header input {
+  cursor: pointer;
+}
+.mt-panel--dragging .mt-panel__header {
+  cursor: grabbing;
 }
 .mt-panel__logo {
   border-radius: 8px;

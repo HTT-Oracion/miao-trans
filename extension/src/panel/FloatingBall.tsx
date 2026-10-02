@@ -1,15 +1,16 @@
 /**
  * 悬浮球 —— 《01》§6.1。
  *
- * 收起态是**两层**：外进度环 72 + 内球 40。
- * 这一层是「全局翻译状态唯一常驻的载体」—— 面板可能正关着，用户只看得见它。
+ * **只在收起态渲染**（与面板互斥显示，见 `PanelRoot.Dock`），因此永远是
+ * 「两层」形态：外进度环 72 + 内球 40。它是「全局翻译状态唯一常驻的载体」——
+ * 面板可能正关着，用户只看得见它。
  * 原方案里收起态只有一枚 16px 纯色状态点，那是**状态**不是**进度**：
  * 全局进度在收起态没有任何载体，必须展开面板才看得到。
  *
  * 内球 5 态（《01》§6.1）：空闲 / 排队中（蓝）/ 翻译中（蓝 + 转圈）/ 完成（绿）/ 失败（红）。
  *
- * 位置与拖动由 `PanelRoot` 持有（面板要锚定它，两者必须共享同一份坐标），
- * 因此本组件是**受控**的。
+ * 位置与拖动由 `PanelRoot` 持有（收起时还要按面板位置反算球位，两者必须共享
+ * 同一份坐标），因此本组件是**受控**的。
  */
 
 import { ProgressRing } from './MagicCircle';
@@ -19,8 +20,6 @@ import type { Point } from '../drag';
 import { logoUrl } from './assets';
 
 export interface FloatingBallProps {
-  /** 展开态还是收起态 —— 收起态才显示 72 进度环 */
-  collapsed: boolean;
   state: ClientState;
   /** 已选张数；未选不显示角标（《01》§6.1） */
   selectedCount: number;
@@ -29,7 +28,10 @@ export interface FloatingBallProps {
   currentBatchRatio?: number;
   position: Point;
   dragging: boolean;
-  /** 拖动位移是否已超过点击阈值 —— 拖完不该顺带展开面板 */
+  /**
+   * 拖动位移是否已超过点击阈值 —— **仅在拖动后仍可查询**（抬手快照）。
+   * 「仅点击展开」全靠这个判据：拖完球不该顺带展开面板。
+   */
   wasDragged: () => boolean;
   onToggle: () => void;
   onPointerDown: (e: React.PointerEvent) => void;
@@ -59,7 +61,6 @@ export function ballToneOf(state: ClientState): BallTone {
 const SIZE = FLOATING_BALL.ringSize;
 
 export function FloatingBall({
-  collapsed,
   state,
   selectedCount,
   progressRatio = 0,
@@ -76,25 +77,20 @@ export function FloatingBall({
 
   return (
     <div
-      className={[
-        'mt-ball',
-        collapsed ? 'mt-ball--collapsed' : 'mt-ball--expanded',
-        dragging ? 'mt-ball--dragging' : '',
-      ]
-        .filter(Boolean)
-        .join(' ')}
+      className={['mt-ball', dragging ? 'mt-ball--dragging' : ''].filter(Boolean).join(' ')}
       style={{ left: position.x, top: position.y, width: SIZE, height: SIZE }}
       data-testid="floating-ball"
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onClick={() => {
+        // 拖动过就只落位、不展开（判据来自抬手快照）
         if (wasDragged()) return;
         onToggle();
       }}
       role="button"
       tabIndex={0}
-      aria-label={collapsed ? '展开喵译面板' : '收起喵译面板'}
+      aria-label="展开喵译面板"
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
@@ -102,18 +98,14 @@ export function FloatingBall({
         }
       }}
     >
-      {collapsed ? (
-        <ProgressRing
-          size={SIZE}
-          ratio={progressRatio}
-          currentRatio={currentBatchRatio}
-          stroke={FLOATING_BALL.ringStroke}
-        >
-          <BallCore tone={tone} size={FLOATING_BALL.ballSize} />
-        </ProgressRing>
-      ) : (
+      <ProgressRing
+        size={SIZE}
+        ratio={progressRatio}
+        currentRatio={currentBatchRatio}
+        stroke={FLOATING_BALL.ringStroke}
+      >
         <BallCore tone={tone} size={FLOATING_BALL.ballSize} />
-      )}
+      </ProgressRing>
 
       {selectedCount > 0 && (
         <span className="mt-ball__badge" aria-label={`已选 ${selectedCount} 张`}>

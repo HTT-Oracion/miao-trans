@@ -37,7 +37,7 @@ npm run page         # 启动漫画页夹具（5199，含「追加 8 张 / SPA �
 npm run verify       # 端到端验收（自动起 mock + 夹具 + 扩展浏览器，27 项断言）
 ```
 
-手动联调：`npm run build` 后在 `chrome://extensions` 以开发者模式加载 `extension/.output/chrome-mv3`，`npm run mock` + `npm run page`，访问 `http://127.0.0.1:5199/`，点开右下角悬浮球展开面板，粘贴令牌配对。
+手动联调：`npm run build` 后在 `chrome://extensions` 以开发者模式加载 `extension/.output/chrome-mv3`，`npm run mock` + `npm run page`，访问 `http://127.0.0.1:5199/`，**点击**右下角悬浮球展开面板（拖动不展开；悬浮球与面板可各自拖动，收起后悬浮球落在面板旁），粘贴令牌配对。
 
 本地测试配对令牌（mock 默认值，可用 `MOCK_TOKEN` 环境变量覆盖）：
 

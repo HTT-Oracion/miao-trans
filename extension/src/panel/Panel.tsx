@@ -43,11 +43,28 @@ export interface PanelProps {
   serviceReady: boolean;
   /** 服务端 progress 换算的比例（仅用于悬浮球；面板内不出现该数字以外的派生值） */
   progressRatio: number;
-  /** 收起面板为悬浮球（真源在 PanelRoot.Dock） */
+  /** 收起面板为悬浮球（真源在 PanelRoot.Dock）—— 收起时球位按面板位置反算 */
   onCollapse: () => void;
+  /**
+   * 面板拖动（本轮新增：面板与悬浮球各自独立拖动）。
+   * 把手是**面板头**：整面板拖动会与缩略图勾选 / 文本选择打架。
+   */
+  dragging: boolean;
+  onHeaderPointerDown: (e: React.PointerEvent) => void;
+  onHeaderPointerMove: (e: React.PointerEvent) => void;
+  onHeaderPointerUp: (e: React.PointerEvent) => void;
 }
 
-export function Panel({ dispatch, serviceReady, progressRatio, onCollapse }: PanelProps) {
+export function Panel({
+  dispatch,
+  serviceReady,
+  progressRatio,
+  onCollapse,
+  dragging,
+  onHeaderPointerDown,
+  onHeaderPointerMove,
+  onHeaderPointerUp,
+}: PanelProps) {
   const batch = useSelector(selectBatch);
   const counter = useSelector(selectCounter);
   const inlineHint = useSelector(selectInlineHint);
@@ -80,13 +97,20 @@ export function Panel({ dispatch, serviceReady, progressRatio, onCollapse }: Pan
 
   return (
     <div
-      className="mt-panel"
+      className={['mt-panel', dragging ? 'mt-panel--dragging' : ''].filter(Boolean).join(' ')}
       style={{ width: PANEL.width, height: PANEL.height, borderRadius: PANEL.radius }}
       data-testid="miao-panel"
       data-state={state}
     >
-      {/* ── 面板头 56 ── */}
-      <header className="mt-panel__header" style={{ height: PANEL.header }}>
+      {/* ── 面板头 56（同时是拖动把手 —— 抓手见 .mt-panel__header 的 cursor） ── */}
+      <header
+        className="mt-panel__header"
+        style={{ height: PANEL.header }}
+        data-testid="panel-header"
+        onPointerDown={onHeaderPointerDown}
+        onPointerMove={onHeaderPointerMove}
+        onPointerUp={onHeaderPointerUp}
+      >
         <img className="mt-panel__logo" src={logoUrl(28)} alt="" width={28} height={28} />
         <div className="mt-panel__titles">
           <strong className="mt-panel__title">喵译</strong>
