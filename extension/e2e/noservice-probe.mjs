@@ -74,6 +74,18 @@ try {
   }
   check('网格扫描到缩略图（夹具页 12 张）', thumbs === 12);
 
+  // 品牌 Logo 必须真的加载出来（404 时 naturalWidth = 0 —— 本次修复的回归钉）
+  const logo = await page.evaluate(() => {
+    const sr = document.querySelector('miao-trans-panel')?.shadowRoot;
+    const img = sr?.querySelector('.mt-panel__logo');
+    if (!img) return null;
+    return { src: img.getAttribute('src'), naturalWidth: img.naturalWidth, complete: img.complete };
+  });
+  check(
+    `面板头 logo 已加载（${logo?.naturalWidth}px · ${logo?.src}）`,
+    !!logo && logo.complete && logo.naturalWidth === 28,
+  );
+
   await page.screenshot({ path: `${OUT}/panel.png` });
 
   // 勾选第一张 → 计数变化（点击勾选框按钮，Playwright 选择器自动穿透 shadow DOM）

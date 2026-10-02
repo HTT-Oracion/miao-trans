@@ -19,7 +19,7 @@ miao-trans/
 │   │   ├── store/      Redux（batch / item / selection 三 slice，DOM 对象走 registry）
 │   │   ├── panel/      悬浮球 + 360×680 面板 + 七层缩略格（L0–L6）
 │   │   └── content/    回写（P0-1）与路由监听（P0-2）
-│   ├── tests/          单测 150 项（含规格几何钉死、CSS 硬规则正则断言）
+│   ├── tests/          单测 153 项（含规格几何钉死、CSS 硬规则正则断言、静态资源完整性）
 │   └── e2e/            真实浏览器端到端验收
 ├── mock-service/       box-service 替身（零第三方依赖，仅 node:*）
 ├── docs/               验收报告与规格偏差记录
@@ -60,7 +60,7 @@ Box 后端尚未开发。`extension/src/domain/demoMode.ts` 的 `DEMO_BYPASS_SER
 
 | 项 | 结果 |
 |---|---|
-| 插件单测 | 150/150 通过 |
+| 插件单测 | 153/153 通过 |
 | mock-service 自测 | 47 + 18 + 49（回归）全绿，13 个契约错误码可达性矩阵 |
 | 端到端验收 | 27/27（真实 Chromium + 未打包扩展，含像素级回写证明） |
 | `tsc --noEmit` / `wxt build` | 干净 / 通过 |
