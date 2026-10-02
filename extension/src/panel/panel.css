@@ -159,11 +159,27 @@
   position: relative;
   display: flex;
   flex-direction: column;
+  /* 规格 360×680（《01》§6.2）；矮视口（<696）降级为视口高 −16，
+     网格区随之收缩滚动 —— 否则底栏（提交按钮）会被裁出视口之外 */
+  height: 680px;
+  max-height: calc(100vh - 16px);
   background: var(--mt-surface);
   border: 1px solid var(--mt-line);
   box-shadow: 0 24px 60px -24px rgba(59, 51, 82, 0.4);
   /* 刻意不设 overflow: hidden —— 见文件头规则 2：L6 菜单是浮层，必须能越出面板 */
   overflow: visible;
+}
+
+/* 纵向分区里只有网格区允许收缩（滚动），其余保持规格高度不被压扁 */
+.mt-panel__header,
+.mt-panel__namerow,
+.mt-panel__hintrow,
+.mt-panel__toolbar,
+.mt-panel__pagehint,
+.mt-panel__divider,
+.mt-panel__footer,
+.mt-progressbar {
+  flex-shrink: 0;
 }
 
 .mt-panel__header {
@@ -331,8 +347,12 @@
 
 .mt-panel__grid {
   padding: 16px;
-  /* 不裁切：L6 菜单要能越出网格区（见文件头规则 2） */
-  overflow: visible;
+  /* 唯一可收缩的分区：矮视口下面板 max-height 收缩时，网格区滚动兜底。
+     代价：L6 更多菜单在此场景下会被滚动容器裁剪（规范视口 ≥696 不受影响）——
+     「菜单被裁」与「面板显示不全」二选一，取后者更不伤主流程。 */
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 .mt-grid {
   display: grid;

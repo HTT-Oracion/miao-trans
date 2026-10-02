@@ -40,8 +40,6 @@ export async function sendBg<T = unknown>(req: BgRequest): Promise<T> {
 // ─────────────────────────── 面板控制器 ───────────────────────────
 
 export interface PanelViewState {
-  expanded: boolean;
-  setExpanded: (v: boolean) => void;
   /** 放大预览中的图片 key */
   previewKey: string | null;
   setPreviewKey: (k: string | null) => void;
@@ -109,7 +107,6 @@ export function usePanelController(
     comicName: string;
   },
 ): PanelController {
-  const [expanded, setExpanded] = useState(true);
   const [previewKey, setPreviewKey] = useState<string | null>(null);
   const [overLimitOpen, setOverLimitOpen] = useState(false);
   const [cancelOpen, setCancelOpen] = useState(false);
@@ -656,8 +653,6 @@ export function usePanelController(
   }, []);
 
   return {
-    expanded,
-    setExpanded,
     previewKey,
     setPreviewKey,
     overLimitOpen,

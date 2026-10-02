@@ -144,7 +144,13 @@ try {
       '--no-default-browser-check',
     ],
   });
-  await ctx.waitForEvent('serviceworker', { timeout: 15000 });
+  // MV3 SW 冷启动极快时 waitForEvent 会错过事件 —— 轮询更稳
+  let swSeen = false;
+  for (let i = 0; i < 60; i++) {
+    if (ctx.serviceWorkers().some((s) => s.url().startsWith('chrome-extension://'))) { swSeen = true; break; }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  if (!swSeen) throw new Error('service worker 未启动（扩展加载失败？）');
   check('B1 扩展已加载（service worker 存在）', true);
 
   const page0 = await ctx.newPage();
@@ -154,13 +160,16 @@ try {
   page.on('console', (m) => consoleLog.push(`[${m.type()}] ${m.text().slice(0, 220)}`));
   await page.goto(`http://127.0.0.1:${PAGE_PORT}/`, { waitUntil: 'domcontentloaded' });
 
-  // Playwright 的选择器可穿透 open shadow root
+  // Playwright 的选择器可穿透 open shadow root。
+  // 默认态是收起的悬浮球（《01》§6.1），先点开面板
+  await page.locator('[data-testid="floating-ball"]').waitFor({ state: 'visible', timeout: 10000 });
+  await page.locator('[data-testid="floating-ball"]').click();
   await waitFor(
     () => page.locator('[data-testid="miao-panel"]').isVisible().catch(() => false),
     15000,
     '面板渲染',
   );
-  check('B2 面板已渲染（shadow DOM 内）', true);
+  check('B2 面板已渲染（shadow DOM 内，点击悬浮球展开）', true);
 
   // ── 令牌配对（§8.1：X-Box-Token）──
   const tokenInput = page.locator('input[placeholder="64 位十六进制令牌"]');

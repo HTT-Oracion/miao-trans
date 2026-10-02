@@ -124,13 +124,16 @@ export function anchorPanel(
   panelHeight: number,
   gap = 12,
 ): { x: number; y: number; flipped: boolean } {
+  // 矮视口下面板实际高度是 min(规格, vh−16)（见 panel.css 的 max-height 降级），
+  // 锚定必须用同一份有效高度，否则 y 会把面板推出视口
+  const effH = Math.min(panelHeight, window.innerHeight - 16);
   const rightSpace = window.innerWidth - (ball.x + ballSize) - gap;
   const leftSpace = ball.x - gap;
   const flipped = rightSpace < panelWidth && leftSpace >= panelWidth;
   const x = flipped ? ball.x - gap - panelWidth : ball.x + ballSize + gap;
   const y = Math.min(
-    Math.max(ball.y + ballSize - panelHeight, 8),
-    Math.max(8, window.innerHeight - panelHeight - 8),
+    Math.max(ball.y + ballSize - effH, 8),
+    Math.max(8, window.innerHeight - effH - 8),
   );
   return { x: Math.max(8, x), y, flipped };
 }

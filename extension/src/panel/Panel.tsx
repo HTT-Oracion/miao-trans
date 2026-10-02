@@ -43,9 +43,11 @@ export interface PanelProps {
   serviceReady: boolean;
   /** 服务端 progress 换算的比例（仅用于悬浮球；面板内不出现该数字以外的派生值） */
   progressRatio: number;
+  /** 收起面板为悬浮球（真源在 PanelRoot.Dock） */
+  onCollapse: () => void;
 }
 
-export function Panel({ dispatch, serviceReady, progressRatio }: PanelProps) {
+export function Panel({ dispatch, serviceReady, progressRatio, onCollapse }: PanelProps) {
   const batch = useSelector(selectBatch);
   const counter = useSelector(selectCounter);
   const inlineHint = useSelector(selectInlineHint);
@@ -93,7 +95,7 @@ export function Panel({ dispatch, serviceReady, progressRatio }: PanelProps) {
         <span className={`mt-panel__service mt-panel__service--${serviceReady ? 'ok' : 'down'}`}>
           {serviceReady ? '服务已就绪' : '服务未就绪'}
         </span>
-        <button type="button" className="mt-iconbtn" aria-label="收起面板" onClick={() => ctl.setExpanded(false)}>
+        <button type="button" className="mt-iconbtn" aria-label="收起面板" onClick={onCollapse}>
           <IconClose size={14} />
         </button>
       </header>
@@ -305,7 +307,7 @@ export function Panel({ dispatch, serviceReady, progressRatio }: PanelProps) {
 
           {selecting || state === 'submitting' ? (
             <>
-              <button type="button" className="mt-ghostbtn" onClick={() => ctl.setExpanded(false)}>
+              <button type="button" className="mt-ghostbtn" onClick={onCollapse}>
                 取消
               </button>
               <button

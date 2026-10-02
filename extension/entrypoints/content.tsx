@@ -36,6 +36,22 @@ export default defineContentScript({
       name: 'miao-trans-panel',
       position: 'modal',
       zIndex: 2_147_483_000,
+      /**
+       * **`:host` 的定位与层级必须在这里补回。**
+       *
+       * WXT 会注入 Shadow Root Reset `:host { all: initial !important }`，
+       * 它把 applyPosition 设置的 inline `position/z-index`（含我们后补的
+       * inline !important，实测 Chrome 中仍被吃掉）全部重置为
+       * position:static / z-index:auto —— z-index 对 static 元素无效，
+       * 面板便只按 DOM 顺序参与 stacking，页面上任何带 z-index 的元素
+       * （漫画站常见 sticky header）都能盖住面板，表现为「面板缺一块、点不到」。
+       *
+       * WXT 的样式注入顺序是 `reset → options.css → entryCss`：
+       * 同权重（author !important、同 specificity）下后声明胜出，
+       * 所以在 options.css 里重申一次即可稳定赢回。onMount 里的 inline
+       * 补丁保留作双保险。
+       */
+      css: ':host{position:relative !important;z-index:2147483000 !important;}',
       anchor: 'body',
       append: 'last',
       /**
@@ -44,7 +60,35 @@ export default defineContentScript({
        */
       isolateEvents: ['keydown', 'keyup', 'keypress'],
 
-      onMount(container, shadow) {
+      onMount(container, shadow, shadowHost) {
+        /**
+         * **host 的定位与 z-index 必须在这里用 `!important` 补一次。**
+         *
+         * 为什么 options.zIndex / applyPosition 的 inline 样式不够：
+         * WXT 的 Shadow Root Reset 会注入 `:host { all: initial !important }`，
+         * 样式表 `!important` 优先级高于普通 inline style —— 它把 host 的
+         * `position` 和 `z-index` **全部**清掉了（实测 computed:
+         * position=static, z-index=auto）。z-index 对 static 元素无效，
+         * 于是面板参与 stacking 时只按 DOM 顺序排 —— 页面上任何带 z-index
+         * 的元素（漫画站常见的 sticky header）都会绘制在面板之上，
+         * 看起来就是「面板被盖住一块、按钮点不到」。
+         * inline style 带 `!important` 在 cascade 中高于 author 样式表的
+         * `!important`，position + z-index 成对补回才能生效。
+         */
+        shadowHost?.style.setProperty('position', 'relative', 'important');
+        shadowHost?.style.setProperty('z-index', '2147483000', 'important');
+
+        /**
+         * **uiContainer（modal 模式下 fixed inset:0 全视口）必须放行指针。**
+         *
+         * WXT 的 applyPosition 给它铺满视口且不设 pointer-events —— 一旦 host
+         * 真正参与 stacking（上面的 z-index 修复），整页点击都会被这个透明层
+         * 拦截（实测 elementFromPoint 命中 host），漫画站什么都点不了。
+         * 指针放行交给 .mt-root 内部的 auto 元素（悬浮球 / 面板锚点）：
+         * pointer-events:none 的祖先下，显式 auto 的后代仍可正常接收指针。
+         */
+        container.style.setProperty('pointer-events', 'none', 'important');
+
         const root = createRoot(container);
         const current = resolveThemeSync();
         root.render(<PanelRoot shadowRoot={shadow} theme={current} />);

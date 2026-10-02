@@ -51,7 +51,8 @@ function Dock({ theme }: { theme: 'light' | 'dark' }) {
   const dispatch = useDispatch();
   const batch = useSelector(selectBatch);
   const selection = useSelector((s: RootState) => s.selection);
-  const [expanded, setExpanded] = useState(true);
+  // 《01》§6.1：收起态（悬浮球）是常驻载体，面板只按需展开 —— 默认收起
+  const [expanded, setExpanded] = useState(false);
   const [hydrated, setHydrated] = useState(false);
 
   const {
@@ -99,7 +100,12 @@ function Dock({ theme }: { theme: 'light' | 'dark' }) {
     <div className={`mt-root mt-root--${theme}`} data-testid="miao-root" style={cssVars(theme)}>
       {anchor && (
         <div className="mt-panelanchor" style={{ left: anchor.x, top: anchor.y }}>
-          <Panel dispatch={dispatch} serviceReady={batch.serviceReady} progressRatio={progressRatio} />
+          <Panel
+            dispatch={dispatch}
+            serviceReady={batch.serviceReady}
+            progressRatio={progressRatio}
+            onCollapse={() => setExpanded(false)}
+          />
         </div>
       )}
       <FloatingBall
