@@ -1,0 +1,21 @@
+# 依赖
+node_modules/
+.pnpm-store/
+
+# 构建产物
+extension/.output/
+extension/.wxt/
+dist/
+*.zip
+
+# 运行期产物（mock service 的落盘根目录与任务清单）
+mock-service/.runtime/
+mock-service/state/
+
+# 工具与系统
+.DS_Store
+*.log
+.vscode/*
+!.vscode/settings.json
+.idea/
+coverage/

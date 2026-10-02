@@ -1,0 +1,22 @@
+{
+  "name": "miao-trans",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "喵译 MiaoTrans · 漫画网页就地翻译器（插件端 ver1.0）",
+  "scripts": {
+    "postinstall": "npm --prefix extension install",
+    "dev": "npm --prefix extension run dev",
+    "build": "npm --prefix extension run build",
+    "zip": "npm --prefix extension run zip",
+    "types": "npm --prefix extension run prepare:types",
+    "compile": "npm --prefix extension run compile",
+    "test": "npm --prefix extension run test",
+    "mock": "node mock-service/src/server.mjs",
+    "page": "node e2e/serve-page.mjs",
+    "verify": "node e2e/verify.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
