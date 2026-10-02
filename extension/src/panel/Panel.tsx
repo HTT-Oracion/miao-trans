@@ -58,8 +58,16 @@ export function Panel({ dispatch, serviceReady, progressRatio }: PanelProps) {
   const selectedKeys = useSelector((s: RootState) => s.selection.selectedKeys);
   const pagesWithSel = useSelector((s: RootState) => pagesWithSelection(s.selection));
   const failedSeqs = useSelector((s: RootState) => s.batch.failedSeqs);
+  const lastEventId = useSelector((s: RootState) => s.batch.lastEventId);
+  const eventsConnected = useSelector((s: RootState) => s.batch.eventsConnected);
 
-  const ctl = usePanelController(dispatch, { selectedKeys, failedSeqs });
+  const ctl = usePanelController(dispatch, {
+    selectedKeys,
+    failedSeqs,
+    clientState: batch.state,
+    lastEventId,
+    eventsConnected,
+  });
   const caps = capabilitiesOf(batch.state);
   const state: ClientState = batch.state;
 

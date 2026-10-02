@@ -11,7 +11,7 @@ import {
   assertInsideRoot, config, validateRoot,
 } from './config.mjs';
 import { ApiError, errorEnvelope, permissionDenied } from './errors.mjs';
-import { allFieldStrings, firstField, groupParts, parseMultipart } from './multipart.mjs';
+import { allFieldStrings, firstField, groupParts, parseMultipartEx } from './multipart.mjs';
 import { normalizeComicName, isSafeDirName } from './names.mjs';
 import { Store } from './store.mjs';
 import { HEARTBEAT_MS, SSE_HEADERS, writeComment } from './sse.mjs';
@@ -43,6 +43,35 @@ function sidecarState() {
 
 const serverLog = (msg) => console.log(`[box-service] ${msg}`);
 const securityLog = (msg) => console.warn(`[box-service][security] ${msg}`);
+
+/**
+ * §8.2 校验点 2：`normalizedComicName` 不含 `/ \ ..`（再断言一次，不信任上游）。
+ * 命中 → 403 PERMISSION_DENIED + 安全日志（这是**安全拒绝**，不是「落盘失败」，
+ * 因此不适用 §4.2 的 `saved:false` 降级路径）。
+ */
+function assertSafeDirName(name) {
+  if (!isSafeDirName(name)) {
+    securityLog(`拒绝路径越界的漫画名（§8.2 校验点 2）：${JSON.stringify(name)}`);
+    throw permissionDenied();
+  }
+}
+
+/**
+ * F-3 / §2.2 `DISK_FULL(507)`：创建任务前探测一次落盘根目录**可写性**。
+ * 请求级落盘不可用 → 507；item 级落盘失败仍走 §4.2 的 `saved:false`（任务继续）。
+ */
+function assertRootWritable() {
+  const probe = path.join(store.root, `.write-probe-${process.pid}-${Date.now()}`);
+  try {
+    fs.writeFileSync(probe, '');
+    fs.unlinkSync(probe);
+  } catch (err) {
+    try { fs.unlinkSync(probe); } catch { /* 尽力清理 */ }
+    securityLog(`落盘根目录不可写（DISK_FULL）：${store.root}（${err && err.code}）`);
+    throw new ApiError('DISK_FULL', '落盘根目录不可写（磁盘满或权限不足），无法创建任务',
+      { root: store.root, reason: err && err.code });
+  }
+}
 
 /** sidecar 未就绪 → 503 UNAVAILABLE（契约 §2.2） */
 function assertSidecarReady() {
@@ -141,11 +170,22 @@ function parseUploadRequest(req, body) {
   if (!/multipart\/form-data/i.test(ct)) {
     throw new ApiError('INVALID_IMAGE', 'Content-Type 必须是 multipart/form-data', { contentType: ct });
   }
-  const parts = parseMultipart(body, ct);
-  if (parts === null) {
+  // Content-Length 与解析出的字节数一致性（能加则加；chunked 无此头时跳过）
+  const declaredLen = Number.parseInt(req.headers['content-length'] ?? '', 10);
+  if (Number.isFinite(declaredLen) && declaredLen !== body.length) {
+    throw new ApiError('INVALID_IMAGE', 'Content-Length 与实际请求体字节数不一致',
+      { contentLength: declaredLen, actualBytes: body.length });
+  }
+  const parsed = parseMultipartEx(body, ct);
+  if (parsed === null) {
     throw new ApiError('INVALID_IMAGE', 'multipart 缺少 boundary', {});
   }
-  const { fields, files } = groupParts(parts);
+  if (!parsed.complete) {
+    // 未以 `--boundary--` 收尾：请求体被截断，宁可报错也不要静默少收几张图
+    throw new ApiError('INVALID_IMAGE', 'multipart 请求体被截断（缺少结束分隔符）',
+      { bytes: body.length });
+  }
+  const { fields, files } = groupParts(parsed.parts);
   const images = (files.get('images') || []).map((p) => ({
     filename: p.filename,
     contentType: p.contentType,
@@ -185,12 +225,14 @@ function handleCreateTask(req, res, cors) {
     const { payload, images, imageOrder } = parseUploadRequest(req, body);
     const norm = normalizeComicName(payload.comicName);
     if (!norm.ok) throw new ApiError(norm.code, norm.message, norm.details);
+    // §8.2 校验点 2：请求校验期就断言，绝不等到落盘期才失败
+    assertSafeDirName(norm.name);
+    assertRootWritable(); // §2.2 DISK_FULL(507)：请求级落盘不可用
     payload.__normalizedName = norm.name;
 
     const { task, replay } = store.createTask({ payload, images, imageOrder });
     const view = store.createView(task);
-    // IDEMPOTENT_REPLAY：HTTP 200 + 完整 Task 对象（不返回 error 信封）
-    if (replay) view.idempotentReplay = true;
+    // IDEMPOTENT_REPLAY：HTTP 200（重放）vs 201（新建），响应体不做任何额外标注
     sendJson(res, replay ? 200 : 201, view, cors);
   });
 }
@@ -199,9 +241,10 @@ function handleAppendBatch(req, res, cors, taskId) {
   return readBody(req).then((body) => {
     assertSidecarReady();
     const { payload, images, imageOrder } = parseUploadRequest(req, body);
-    const { task, replay } = store.appendBatch(taskId, { payload, images, imageOrder });
+    // §8.2 校验点 2：不带 comicName，用任务上已存的归一化名再断言一次
+    assertSafeDirName(store.mustTask(taskId).dirName);
+    const { task } = store.appendBatch(taskId, { payload, images, imageOrder });
     const view = store.createView(task);
-    if (replay) view.idempotentReplay = true;
     sendJson(res, 200, view, cors);
   });
 }
@@ -289,8 +332,17 @@ function scanLibrary() {
   };
 }
 
-/** 解析并校验漫画目录（路径越界 → 403 + 安全日志） */
+/**
+ * 解析并校验漫画目录（路径穿越 → 403 + 安全日志，契约 §8.2）。
+ * 注意：这里的 comicName 直接来自 URL，**先对原始名做 §8.2 校验点 2 的断言**——
+ * 归一化会把 `/ \ :` 剥离掉，若只断言归一化结果，`../../etc` 会退化成合法的 `....etc`
+ * 而返回 404，掩盖了越界意图。§8.2 只允许 403。
+ */
 function resolveComicDir(rawName) {
+  if (!isSafeDirName(rawName)) {
+    securityLog(`拒绝路径越界的漫画名（§8.2 校验点 2）：${JSON.stringify(rawName)}`);
+    throw permissionDenied();
+  }
   const norm = normalizeComicName(rawName);
   if (!norm.ok) throw new ApiError(norm.code, norm.message, norm.details);
   if (!isSafeDirName(norm.name)) {

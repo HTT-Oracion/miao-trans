@@ -62,7 +62,9 @@ export const config = {
   etaNull: envBool('MOCK_ETA_NULL'),
   failSeqs: parseSeqList(process.env.MOCK_FAIL_SEQ),
   itemFailRate: Math.max(0, Math.min(1, Number(process.env.MOCK_ITEM_FAIL_RATE || 0) || 0)),
-  skipExisting: envBool('MOCK_SKIP_EXISTING'),
+  // 幂等续做是**标准语义**（§4.2 / §7.4），不是可选开关 → 默认开启。
+  // 只有显式 MOCK_SKIP_EXISTING=0/false/no/off 才关闭（关掉后保留旧的 EEXIST 行为，用于反向演练）。
+  skipExisting: envBool('MOCK_SKIP_EXISTING', true),
   sidecarDown: envBool('MOCK_SIDECAR_DOWN'),
   // 可选：强制落盘失败，用于验证 saved:false / DISK_FULL 路径
   diskFull: envBool('MOCK_DISK_FULL'),
@@ -99,32 +101,70 @@ export function canonicalize(p) {
   }
 }
 
-/** 启动时校验一次（契约 §8.2 校验点 1） */
-export function validateRoot(rootDir) {
-  const abs = path.resolve(rootDir);
+// 黑名单条目分两种匹配语义（契约 §8.2 校验点 1）：
+//  · EXACT  —— 只拒「目录本身」。这些是**容器目录**：其下仍可能是合法落盘位置
+//              （如 /Users 下的 ~/Pictures/Box 漫画，见 §7.1；/private/var 下的
+//              macOS TMPDIR /private/var/folders/…）。若按前缀拒绝会把合法路径一并挡掉。
+//  · PREFIX —— 连子路径一并拒绝。这些是真正的系统目录。
+const BLACKLIST_EXACT = () => {
   const home = os.homedir();
-  const blacklist = [
-    path.parse(abs).root,
-    '/tmp',
+  return [
+    path.parse(path.resolve('/')).root, // '/'（Windows 下为 'C:\\'）
+    '/Users',                           // home 的父目录：本身不可作落盘根
+    home,                               // 用户主目录本身（§8.2「用户主目录本身」）
+    '/private',                         // TMPDIR 的真实父目录，本身不可作落盘根
+    '/private/var',
+    '/var',                             // → /private/var
+  ];
+};
+
+const BLACKLIST_PREFIX = () => {
+  const home = os.homedir();
+  return [
+    '/tmp',                 // → /private/tmp
     '/private/tmp',
-    '/var',
-    '/usr',
+    '/private/var/tmp',
+    '/private/etc',
     '/etc',
+    '/usr',
     '/System',
     '/Library',
     '/Applications',
-    home,
-    path.join(home, 'Library'),
+    '/Volumes',
+    '/cores',
+    '/opt',
+    path.join(home, 'Library'), // 修复原先「home/Library 精确相等」被 ~/Library/Caches/xxx 绕过
   ];
-  const canonicalAbs = canonicalize(abs);
-  for (const bad of blacklist) {
-    if (!bad) continue;
-    const cb = canonicalize(bad);
-    if (canonicalAbs === cb) {
-      throw new Error(`落盘根目录不合法（命中黑名单）：${abs}`);
-    }
+};
+
+function blacklistHit(canonicalAbs) {
+  for (const raw of BLACKLIST_EXACT()) {
+    if (!raw) continue;
+    if (canonicalAbs === canonicalize(raw)) return raw;
   }
-  if (!path.isAbsolute(abs)) throw new Error(`落盘根目录必须是绝对路径：${abs}`);
+  for (const raw of BLACKLIST_PREFIX()) {
+    if (!raw) continue;
+    const cb = canonicalize(raw);
+    if (!cb) continue;
+    // 根路径（'/'）的 `cb + sep` 为 '//'，天然不会前缀命中任何路径 → 根只做精确匹配
+    if (canonicalAbs === cb || canonicalAbs.startsWith(cb + path.sep)) return raw;
+  }
+  return null;
+}
+
+/** 启动时校验一次（契约 §8.2 校验点 1） */
+export function validateRoot(rootDir) {
+  if (typeof rootDir !== 'string' || !path.isAbsolute(rootDir)) {
+    throw new Error(`落盘根目录必须是绝对路径：${rootDir}`);
+  }
+  const abs = path.resolve(rootDir);
+  const canonicalAbs = canonicalize(abs);
+  const hit = blacklistHit(canonicalAbs);
+  if (hit) {
+    throw new Error(`落盘根目录不合法（命中黑名单 ${hit}）：${abs}`);
+  }
+  // 已存在的目录**不**强制 chmod（否则会抹掉「只读根目录 → 507 DISK_FULL」这类可注入条件）；
+  // 新建的目录用 0700；可写性由请求期的 assertRootWritable() 校验（见 server.mjs / F-3）。
   fs.mkdirSync(abs, { recursive: true, mode: 0o700 });
   return canonicalize(abs);
 }

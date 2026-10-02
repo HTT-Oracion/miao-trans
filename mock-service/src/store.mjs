@@ -21,6 +21,16 @@ const ITEM_TERMINAL = new Set(['success', 'failed', 'skipped']);
 const MAX_ATTEMPTS = 2; // 首次 + 1 次重试（契约 §4.2「重试 N 次后失败」）
 const MAX_EVENT_LOG = 20000;
 
+/**
+ * 允许降级为 `saved:false` 的**落盘/资源**错误（契约 §4.2「落盘失败不阻断主路径」）。
+ *  · ENOSPC/EDQUOT/EROFS/EMFILE/ENFILE：磁盘满 / 配额 / 只读 / 句柄耗尽。
+ *  · EEXIST：`wx` 独占写命中已存在文件——这是「文件已存在」这类**落盘失败**，
+ *    正是 §7.4 幂等续做关掉开关（MOCK_SKIP_EXISTING=0）后要反向演练的旧行为。
+ * 其余错误——特别是路径/安全类异常（§8.2 校验点 2 抛出的 ApiError PERMISSION_DENIED）——
+ * 必须向上抛，绝不能静默变成 `success` 让任务走到 `done`。
+ */
+const DEGRADABLE_WRITE_ERRNOS = new Set(['ENOSPC', 'EDQUOT', 'EROFS', 'EMFILE', 'ENFILE', 'EEXIST']);
+
 const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 
 function ulid() {
@@ -379,6 +389,17 @@ export class Store {
       }
     } catch (err) {
       task.lastError = String((err && err.message) || err);
+      // 正在处理中的 item 不能留在 translating（否则任务终态里挂着一个假「进行中」）
+      for (const batch of task.batches) {
+        for (const item of batch.items) {
+          if (item.status === 'translating') {
+            item.status = 'failed';
+            item.saved = false;
+            item.reason = 'internal_error';
+            this._emitItemStatus(task, batch, item);
+          }
+        }
+      }
       this._skipAllPending(task, 'internal_error');
       this._finalize(task, 'failed');
     }
@@ -439,13 +460,16 @@ export class Store {
       return;
     }
 
-    // 合成译文并落盘；落盘失败不阻断主路径（saved:false 且 item 仍为 success）
+    // 合成译文并落盘。只有真正的落盘/资源错误才降级为 saved:false 且不阻断主路径
+    // （§4.2「落盘失败不阻断主路径」）；其余错误（尤其是 §8.2 安全/路径类 ApiError）向上抛。
     try {
       await this._writeItem(task, item);
       item.saved = true;
     } catch (err) {
+      const degradable = !(err instanceof ApiError) && DEGRADABLE_WRITE_ERRNOS.has(err && err.code);
+      if (!degradable) throw err;
       item.saved = false;
-      item.reason = err && err.code === 'ENOSPC' ? 'disk_full' : `write_failed:${err && err.code}`;
+      item.reason = err.code === 'ENOSPC' ? 'disk_full' : `write_failed:${err.code}`;
     }
     item.status = 'success';
     item.durationMs = Date.now() - t0;
@@ -526,6 +550,8 @@ export class Store {
     task.queuePosition = 0;
     const idx = this.queue.indexOf(task);
     if (idx >= 0) this.queue.splice(idx, 1);
+    // 移出队列后必须重排名次，否则余下任务的 queuePosition 与 GET /queue 的 position 打架（§5.7）
+    this._reindexQueue();
     this._syncBatchStatuses(task);
     this._emitTaskStatus(task);
     this._persistNow(task);

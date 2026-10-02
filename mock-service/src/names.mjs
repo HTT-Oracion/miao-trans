@@ -64,11 +64,19 @@ export function normalizeComicName(raw) {
   return { ok: true, name: s };
 }
 
-/** 二次断言：规范化结果不得含路径成分（契约 §8.2 校验点 2） */
+/**
+ * 二次断言：规范化结果不得含「路径成分」（契约 §8.2 校验点 2）。
+ *
+ * 语义是**防路径穿越**，所以按**路径成分**判定而不是子串匹配：
+ * 只有「存在恰好等于 `.` 或 `..` 的成分」/「含 `/` `\`」/「含 NUL」/「为空」才是危险。
+ * `a..b` 没有分隔符、无法穿越，是合法漫画名，必须放行。
+ * （契约 §6.1 第 3 步已把 `/ \ :` 剥离，归一化之后真实穿越已不可达；此处是 backstop。）
+ */
 export function isSafeDirName(name) {
   if (typeof name !== 'string' || name.length === 0) return false;
+  if (name.includes('\u0000')) return false;
   if (name.includes('/') || name.includes('\\')) return false;
-  if (name.includes('..')) return false;
-  if (name === '.' || name === '..') return false;
+  const components = name.split(/[/\\]/);
+  if (components.some((c) => c === '.' || c === '..')) return false;
   return true;
 }

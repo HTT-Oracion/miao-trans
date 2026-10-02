@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
+import os from 'node:os';
 import path from 'node:path';
 
 import { makeSolidPng } from '../src/png.mjs';
@@ -82,7 +83,11 @@ async function waitDone(base, taskId, timeoutMs = 20000) {
 }
 
 const servers = [];
-const TMP = process.env.MTS_TMP || '/tmp/mts-extras';
+// 全部临时产物隔离到 os.tmpdir() 下的唯一临时目录，收尾整体删除。
+// （每个 startServer 都必须传 MOCK_ROOT + MOCK_STATE_DIR —— server.mjs 在**监听之前**
+//   就会执行 validateRoot + store.init，即使「注定启动失败」的用例也会建目录。）
+const TMP_OWNED = !process.env.MTS_TMP;
+const TMP = process.env.MTS_TMP || fs.mkdtempSync(path.join(os.tmpdir(), 'miao-extras-'));
 fs.mkdirSync(TMP, { recursive: true });
 
 try {
@@ -177,7 +182,13 @@ try {
   check('5180 被占时在 5180–5190 段内探测到下一个空闲端口',
     Number.isFinite(sProbe.port) && sProbe.port > 5180 && sProbe.port <= 5190, `port=${sProbe.port}`);
 
-  const sFail = await startServer({ MOCK_PORT: '5185' }, { waitFor: 'fail' });
+  const failBase = path.join(TMP, `port-fail-${Date.now()}`);
+  const sFail = await startServer({
+    MOCK_PORT: '5185',
+    // 该用例「注定启动失败」，但 server.mjs 在监听之前就会建目录 → 必须同样隔离
+    MOCK_ROOT: path.join(failBase, 'Box 漫画'),
+    MOCK_STATE_DIR: path.join(failBase, 'state'),
+  }, { waitFor: 'fail' });
   servers.push(sFail.child);
   const tail = sFail.log().split('\n').filter((l) => l.includes('占用') || l.includes('Error')).slice(-2);
   console.log('   MOCK_PORT=5185（已被占）→', tail.join(' | '));
@@ -203,6 +214,7 @@ try {
   for (const child of servers) {
     try { child.kill('SIGKILL'); } catch { /* ignore */ }
   }
+  if (TMP_OWNED) fs.rmSync(TMP, { recursive: true, force: true });
 }
 
 console.log(`\n=== 附加自测汇总：通过 ${pass} / 失败 ${fail} ===`);

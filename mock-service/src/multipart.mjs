@@ -37,30 +37,65 @@ export function getBoundary(contentType) {
   return b || null;
 }
 
+const CRLF = Buffer.from('\r\n', 'latin1');
+const DOUBLE_CRLF = Buffer.from('\r\n\r\n', 'latin1');
+
 /**
- * @returns {Array<{name:string, filename:string|null, contentType:string|null, data:Buffer}>}
+ * 严格边界：分隔符 = `CRLF "--" boundary`，且**紧跟** `CRLF`（普通分片）或 `--`（结束分片）。
+ * 只做「子串命中」会把图片字节里恰好出现的 `\r\n--<boundary>X` 误判成边界 →
+ * 分片错位 / 串图 / 张数错（甚至绕过 20 张上限计数）。RFC 2046 要求校验后缀。
+ *
+ * @returns {{start:number, after:number}|null} after = 紧随 boundary 之后的位置
  */
-export function parseMultipart(body, contentType) {
+function findNextDelimiter(body, dashBoundary, from) {
+  const needle = Buffer.concat([CRLF, dashBoundary]);
+  let at = body.indexOf(needle, from);
+  while (at >= 0) {
+    const after = at + needle.length;
+    const a = body[after];
+    const b = body[after + 1];
+    const isNormal = a === 0x0d && b === 0x0a; // 后跟 CRLF → 普通分片
+    const isClose = a === 0x2d && b === 0x2d;  // 后跟 '--' → 结束分片
+    if (isNormal || isClose) return { start: at, after };
+    at = body.indexOf(needle, at + 1); // 伪边界，继续找下一个
+  }
+  return null;
+}
+
+/**
+ * @returns {{parts: Array<{name:string, filename:string|null, contentType:string|null, data:Buffer}>, complete: boolean}|null}
+ *   complete=false 表示请求体未以结束分隔符 `--boundary--` 收尾（被截断）→ 调用方应拒绝。
+ */
+export function parseMultipartEx(body, contentType) {
   const boundary = getBoundary(contentType);
   if (!boundary) return null;
 
-  const open = Buffer.from(`--${boundary}\r\n`, 'latin1');
-  const sep = Buffer.from(`\r\n--${boundary}`, 'latin1');
+  const dashBoundary = Buffer.from(`--${boundary}`, 'latin1');
 
-  let start = body.indexOf(open);
-  if (start < 0) return [];
-  start += open.length;
+  // 首个 delimiter 允许出现在 body 开头（其后必须紧跟 CRLF 或 --）
+  let afterFirst;
+  if (body.length >= dashBoundary.length && body.subarray(0, dashBoundary.length).equals(dashBoundary)) {
+    afterFirst = dashBoundary.length;
+  } else {
+    const at = body.indexOf(Buffer.concat([CRLF, dashBoundary]));
+    if (at < 0) return { parts: [], complete: false };
+    afterFirst = at + CRLF.length + dashBoundary.length;
+  }
 
   const parts = [];
-  while (start <= body.length) {
-    let end = body.indexOf(sep, start);
-    let last = false;
-    if (end < 0) {
-      end = body.length;
-      last = true;
-    }
-    const chunk = body.subarray(start, end);
-    const headerEnd = chunk.indexOf('\r\n\r\n');
+  let cursor = afterFirst;
+  let complete = false;
+  for (;;) {
+    // cursor 指向 delimiter 之后：'--' → 结束；CRLF → 下一个分片
+    if (body[cursor] === 0x2d && body[cursor + 1] === 0x2d) { complete = true; break; } // 结束边界
+    if (body[cursor] !== 0x0d || body[cursor + 1] !== 0x0a) break; // 非法/截断，停止
+    const partStart = cursor + 2;
+
+    const delim = findNextDelimiter(body, dashBoundary, partStart);
+    if (!delim) break; // 无闭合边界（请求被截断）：不再产出分片
+
+    const chunk = body.subarray(partStart, delim.start);
+    const headerEnd = chunk.indexOf(DOUBLE_CRLF);
     if (headerEnd >= 0) {
       const headers = parseHeaders(chunk.subarray(0, headerEnd).toString('utf8'));
       const disp = parseDisposition(headers['content-disposition']);
@@ -68,17 +103,20 @@ export function parseMultipart(body, contentType) {
         name: disp.name,
         filename: disp.filename,
         contentType: headers['content-type'] || null,
-        data: Buffer.from(chunk.subarray(headerEnd + 4)),
+        data: Buffer.from(chunk.subarray(headerEnd + DOUBLE_CRLF.length)),
       });
     }
-    if (last) break;
-    start = end + sep.length;
-    // 结束边界 `--`
-    if (body[start] === 0x2d && body[start + 1] === 0x2d) break;
-    // 下一个 part 的 CRLF
-    if (body[start] === 0x0d && body[start + 1] === 0x0a) start += 2;
+    cursor = delim.after;
   }
-  return parts;
+  return { parts, complete };
+}
+
+/**
+ * @returns {Array<{name:string, filename:string|null, contentType:string|null, data:Buffer}>}
+ */
+export function parseMultipart(body, contentType) {
+  const res = parseMultipartEx(body, contentType);
+  return res === null ? null : res.parts;
 }
 
 /** 名称归一：`images[]` 与 `images` 视为同一字段 */

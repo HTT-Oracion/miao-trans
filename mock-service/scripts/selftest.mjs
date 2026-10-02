@@ -1,20 +1,70 @@
 // 自测脚本（交付说明中 8 条验收的可复现证据）
 // 用法：node mock-service/scripts/selftest.mjs
-// 依赖两个实例：
-//   A: 默认端口 5180，MOCK_ITEM_MS=100
+// 脚本**自带**两个实例，并把落盘根目录 / 状态目录隔离到 os.tmpdir() 下的唯一临时目录，
+// 跑完自动杀进程 + 删临时目录（绝不污染仓库 mock-service/.runtime）：
+//   A: 5180，MOCK_ITEM_MS=100
 //   B: 5181，MOCK_ITEM_MS=50 MOCK_FAIL_SEQ=3,5 MOCK_ETA_NULL=1
+// 也可用 BASE_A / BASE_B（+ROOT_A/ROOT_B）指向外部已启动的实例，此时不再自起进程。
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
+import { spawn } from 'node:child_process';
 
 import { makeSolidPng } from '../src/png.mjs';
 
 const TOKEN = process.env.MOCK_TOKEN ||
   'a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90';
-const BASE_A = process.env.BASE_A || 'http://127.0.0.1:5180/api/v1';
-const BASE_B = process.env.BASE_B || 'http://127.0.0.1:5181/api/v1';
-const ROOT_A = process.env.ROOT_A ||
-  path.resolve(import.meta.dirname, '../.runtime/Box 漫画');
+const PKG = path.resolve(import.meta.dirname, '..');
+
+// 所有临时产物统一放这里，收尾整体删除
+const TEMP_BASE = fs.mkdtempSync(path.join(os.tmpdir(), 'miao-selftest-'));
+const ROOT_A = process.env.ROOT_A || path.join(TEMP_BASE, 'A', 'Box 漫画');
+const ROOT_B = process.env.ROOT_B || path.join(TEMP_BASE, 'B', 'Box 漫画');
+let BASE_A = process.env.BASE_A || '';
+let BASE_B = process.env.BASE_B || '';
+
+const children = [];
+function startServer(env, { waitFor = 'listen', timeoutMs = 10000 } = {}) {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, ['src/server.mjs'], {
+      cwd: PKG, env: { ...process.env, ...env }, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let out = '';
+    const timer = setTimeout(
+      () => resolve({ child, url: null, failed: true, log: () => out, timeout: true }), timeoutMs);
+    const onData = (d) => {
+      out += d.toString();
+      const m = /监听地址\s*: http:\/\/127\.0\.0\.1:(\d+)/.exec(out);
+      if (m && waitFor === 'listen') {
+        clearTimeout(timer);
+        resolve({ child, url: `http://127.0.0.1:${m[1]}/api/v1`, log: () => out });
+      }
+    };
+    child.stdout.on('data', onData);
+    child.stderr.on('data', onData);
+  });
+}
+
+if (!(BASE_A && BASE_B)) {
+  const a = await startServer({
+    MOCK_PORT: '5180', MOCK_ITEM_MS: '100',
+    MOCK_ROOT: ROOT_A, MOCK_STATE_DIR: path.join(TEMP_BASE, 'A', 'state'),
+  });
+  const b = await startServer({
+    MOCK_PORT: '5181', MOCK_ITEM_MS: '50', MOCK_FAIL_SEQ: '3,5', MOCK_ETA_NULL: '1',
+    MOCK_ROOT: ROOT_B, MOCK_STATE_DIR: path.join(TEMP_BASE, 'B', 'state'),
+  });
+  children.push(a.child, b.child);
+  if (!a.url || !b.url) {
+    for (const c of children) { try { c.kill('SIGKILL'); } catch { /* ignore */ } }
+    fs.rmSync(TEMP_BASE, { recursive: true, force: true });
+    console.error('❌ 自起实例失败（5180/5181 可能被占用）：', a.log(), b.log());
+    process.exit(1);
+  }
+  BASE_A = a.url;
+  BASE_B = b.url;
+}
 // 运行期目录可能残留历史任务，用唯一后缀保证每次跑的序号都从 1 开始
 const TAG = process.env.RUN_TAG || Math.random().toString(36).slice(2, 7);
 const n = (name) => `${name} ${TAG}`;
@@ -334,9 +384,14 @@ async function t9(prev) {
   const key = crypto.randomUUID();
   const r1 = await call(BASE_A, 'POST', '/tasks', { form: buildForm([1], { comicName: n('幂等测试'), key }) });
   const r2 = await call(BASE_A, 'POST', '/tasks', { form: buildForm([1], { comicName: n('幂等测试'), key }) });
-  console.log('   第一次 →', r1.status, r1.body.taskId, '| 第二次 →', r2.status, r2.body.taskId, 'idempotentReplay=', r2.body.idempotentReplay);
-  check('重复 idempotencyKey → HTTP 200 + 完整 Task + idempotentReplay:true',
-    r2.status === 200 && r2.body.idempotentReplay === true && r2.body.taskId === r1.body.taskId && !r2.body.error);
+  console.log('   第一次 →', r1.status, r1.body.taskId, '| 第二次 →', r2.status, r2.body.taskId,
+    '| idempotentReplay(已删除的旧自造字段) =', r2.body.idempotentReplay);
+  // 契约 §5.2「重复提交返回已有 taskId 且不报错」/ §2.2 IDEMPOTENT_REPLAY|200：
+  // 只用 HTTP 200（重放）vs 201（新建）区分，响应体**不得**出现契约外的自造字段。
+  check('重复 idempotencyKey → HTTP 200 + 复用同一 taskId + 无 error 信封',
+    r2.status === 200 && r2.body.taskId === r1.body.taskId && !r2.body.error);
+  check('响应体不含契约外自造字段 idempotentReplay（§5.2）',
+    r2.body.idempotentReplay === undefined);
 
   // 取消 running：等当前张跑完，已落盘保留
   await sleep(1200);
@@ -381,23 +436,32 @@ async function t9(prev) {
 
   const escape = await call(BASE_A, 'POST', '/library/..%2F..%2Fetc/reveal');
   console.log('   越界漫画名 →', escape.status, brief(escape.body, 160));
-  check('路径越界被拒（403 或规范化后 404）', escape.status === 403 || escape.status === 404);
+  // 契约 §8.2：三次校验任一失败即 403 + 安全日志（只允许 403，不接受「归一化后 404」）
+  check('路径越界 → 403 PERMISSION_DENIED（§8.2）',
+    escape.status === 403 && escape.body.error && escape.body.error.code === 'PERMISSION_DENIED');
 }
 
 // ------------------------------------------------------------------ 主流程
 
 console.log('喵译 mock box-service 自测');
-console.log('A =', BASE_A, '\nB =', BASE_B, '\nROOT_A =', ROOT_A);
+console.log('A =', BASE_A, '\nB =', BASE_B, '\nROOT_A =', ROOT_A, '\nTEMP_BASE =', TEMP_BASE);
 
-await t1();
-const ctx = await t2();
-await t2bNormalizeAndSniff(ctx.r5form);
-await t3();
-await t4();
-const q = await t5();
-await t6();
-const c = await t8();
-await t9(c);
+try {
+  await t1();
+  const ctx = await t2();
+  await t2bNormalizeAndSniff(ctx.r5form);
+  await t3();
+  await t4();
+  await t5();
+  await t6();
+  const c = await t8();
+  await t9(c);
+} finally {
+  for (const child of children) {
+    try { child.kill('SIGKILL'); } catch { /* ignore */ }
+  }
+  fs.rmSync(TEMP_BASE, { recursive: true, force: true });
+}
 
 console.log(`\n=== 汇总：通过 ${pass} / 失败 ${fail} ===`);
 process.exit(fail === 0 ? 0 : 1);

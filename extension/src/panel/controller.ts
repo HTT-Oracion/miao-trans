@@ -12,8 +12,9 @@ import type { Dispatch, UnknownAction } from '@reduxjs/toolkit';
 import { browser } from 'wxt/browser';
 
 import type { ItemDto, QueueDto, SseEnvelope, TaskCreatedDto, TaskDto } from '../types/contract';
-import { BoxServiceError } from '../types/contract';
+import { BoxServiceError, SSE_STALE_MS, SSE_WATCHDOG_TICK_MS } from '../types/contract';
 import type { BgPush, BgRequest, BgResponse } from '../types/messages';
+import { isActive, type ClientState } from '../domain/clientState';
 import { collectOrderedImages, type PageImage } from '../collectImages';
 import { registry } from '../store/registry';
 import { batchActions } from '../store/translation/batchSlice';
@@ -95,7 +96,16 @@ export interface PanelController extends PanelViewState {
  */
 export function usePanelController(
   dispatch: Dispatch<UnknownAction>,
-  mirror: { selectedKeys: string[]; failedSeqs: number[] },
+  mirror: {
+    selectedKeys: string[];
+    failedSeqs: number[];
+    /** 当前客户端状态 —— 看门狗据此判断「是否还需要盯事件流」 */
+    clientState: ClientState;
+    /** 服务端最后一次事件的 id —— P0-3 重连时作为 `Last-Event-ID` 上送 */
+    lastEventId: string | null;
+    /** 事件流当前是否连着（background 的 `onOpen`/`onError` 推送） */
+    eventsConnected: boolean;
+  },
 ): PanelController {
   const [expanded, setExpanded] = useState(true);
   const [previewKey, setPreviewKey] = useState<string | null>(null);
@@ -108,6 +118,12 @@ export function usePanelController(
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
+
+  /** `mirror` 的最新值 —— 看门狗跑在 interval 里，不能捕获渲染时的旧值 */
+  const mirrorRef = useRef(mirror);
+  useEffect(() => {
+    mirrorRef.current = mirror;
+  });
 
   /** 当前任务上下文 —— 放 ref 里，避免闭包捕获旧值 */
   const ctx = useRef<{
@@ -158,11 +174,16 @@ export function usePanelController(
     })();
   }, [dispatch]);
 
+  /** 事件流活性 —— 最后一次收到任何推送（**含心跳**）的时刻 */
+  const lastPushAtRef = useRef<number>(0);
+
   // ── 事件流推送 → store（含回写） ──
   useEffect(() => {
     const onMessage = (msg: unknown): undefined => {
       if (!msg || typeof msg !== 'object') return undefined;
       const push = msg as BgPush;
+      // 连上了或者断了的推送都算「有活性」—— 断连推送本身说明 SW 还活着
+      lastPushAtRef.current = Date.now();
       if (push.type === 'TASK_EVENT_STATE') {
         dispatch(batchActions.eventsConnectedSet(push.connected));
         return undefined;
@@ -241,6 +262,59 @@ export function usePanelController(
       dispatch(batchActions.inlineError(e.message));
     }
   }, [dispatch]);
+
+  /**
+   * **P0-3 事件流看门狗** —— 契约要求「`taskId` 与页面生命周期解绑，按 `Last-Event-ID` 重连」。
+   *
+   * 为什么必须有它：事件流的持有者是 background 的 **MV3 service worker**，
+   * 而 `rt.streams` 是 SW 的内存态。SW 被回收（空闲约 30s、或 Chrome 的硬性上限）后
+   * 流就没了，而且**不会再有任何 `onError`** —— 死掉的 SW 无法通知任何人。
+   * 此时面板的唯一表征是「事件不再到达」，所以只能靠**静默超时**来判定。
+   *
+   * 为什么驱动器是面板而不是 SW：流的唯一消费者是面板（SW 只是 `pushToTab` 中转）。
+   * content script 与页面同寿命、远长于 SW；由它检测并通过 `runtime.sendMessage`
+   * 重新订阅，这个动作本身就会**唤醒 SW**。让 SW 自己重启订阅没有用户可感知的收益，
+   * 反而要为「给可能已关闭的 tab 续流」付出复杂度。
+   *
+   * 为什么用 `lastEventId` 续而**不**从 0 重放：同一页面上已回写的图，其 DOM 里的
+   * `src` 已被换成 `blob:`。若从 0 重放，旧的 `item.status: success` 会再次触发
+   * 回写，而 P0-1 校验看到 `currentSrc !== expectedUrl` 会把它们误标成
+   * 「原图已离开页面」。按 id 续传天然跳过这些已经处理过的事件。
+   *
+   * 反过来说，**页面刷新**必须从 0 重放（`lastEventId: null`，见启动 effect）：
+   * 刷新后 DOM 回到原图，需要重新回写一遍。这也是这里刻意**不**把 `lastEventId`
+   * 持久化进 storage 的原因 —— 持久化会让刷新后的重放被跳过，回写就丢了。
+   */
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      const taskId = ctx.current.taskId;
+      if (!taskId) return;
+      // 终态不再需要事件流；只在 queued / running 期间盯着
+      if (!isActive(mirrorRef.current.clientState)) return;
+
+      const staleMs = Date.now() - lastPushAtRef.current;
+      // 已知断连（SW 明确报了 connected:false）→ 立刻重订阅，不等静默超时。
+      // 这是 `eventsConnected` 唯一的消费点：否则它只是一个死信号。
+      const knownDown = mirrorRef.current.eventsConnected === false;
+      if (!knownDown && staleMs < SSE_STALE_MS) return;
+
+      lastPushAtRef.current = Date.now(); // 重置，避免每一 tick 都重发
+      void (async () => {
+        try {
+          await sendBg({
+            type: 'TASK_WATCH_START',
+            taskId,
+            lastEventId: mirrorRef.current.lastEventId,
+          });
+          // 重连后拉一次全量对账：断连窗口里的终态/失败项不会被漏掉
+          await refreshTask();
+        } catch {
+          // 服务不可达 —— 下一 tick 再试（保持 20s 节奏，不做激进重试）
+        }
+      })();
+    }, SSE_WATCHDOG_TICK_MS);
+    return () => window.clearInterval(timer);
+  }, [refreshTask]);
 
   /**
    * 单张回写 —— **P0-1**。

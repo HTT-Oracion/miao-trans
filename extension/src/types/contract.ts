@@ -33,6 +33,18 @@ export const COMIC_NAME_MAX_CHARS = 64;
 /** 《03》§5.5：SSE 心跳间隔 15s */
 export const SSE_HEARTBEAT_MS = 15_000;
 
+/**
+ * 事件流「静默」阈值（《01》§6.4 **P0-3** 的落地参数）。
+ *
+ * 必须**大于**心跳间隔：服务端每 15s 一条心跳，健康但在空转的流（例如任务还在排队）
+ * 期间只会有心跳。若阈值 ≤ 15s，看门狗会把「健康但安静」误判为断连，形成重连风暴。
+ * 取 20s：容两次心跳的抖动余量。
+ */
+export const SSE_STALE_MS = 20_000;
+
+/** 看门狗轮询间隔（够密以便及时恢复，又不至于让面板常态化做无用功） */
+export const SSE_WATCHDOG_TICK_MS = 5_000;
+
 /** 《03》§6.3：重名策略 —— 追加到已有 / 新建副本，**永不覆盖** */
 export const DUPLICATE_STRATEGY = ['append', 'duplicate'] as const;
 export type DuplicateStrategy = (typeof DUPLICATE_STRATEGY)[number];
