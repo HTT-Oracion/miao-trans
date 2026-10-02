@@ -8,7 +8,10 @@
     "noUnusedParameters": true,
     "jsx": "react-jsx",
     "lib": ["ESNext", "DOM", "DOM.Iterable", "WebWorker"],
-    "types": ["chrome"],
+    // `chrome` 给扩展 API；`node` 给单测与 e2e 脚本（node:fs / node:path / node:url）。
+    // 两者并存不会串味：扩展运行时不会真的去 require node 内置模块，
+    // 而 `import.meta.env.BROWSER` 才是判断运行环境的依据。
+    "types": ["chrome", "node"],
     "skipLibCheck": true
   },
   "include": ["**/*.ts", "**/*.tsx", ".wxt/**/*"],

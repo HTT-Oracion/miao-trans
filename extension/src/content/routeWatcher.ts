@@ -107,14 +107,31 @@ export function installRouteWatcher(
   };
 
   for (const method of ['pushState', 'replaceState'] as const) {
-    const original = history[method].bind(history);
-    const patched = (...args: Parameters<History['pushState']>): void => {
-      original(...args);
+    /**
+     * 必须保存**未 bind 的原始引用**，卸载时才能把 `history[method]` 还原成
+     * 与安装前**同一个函数对象**。
+     *
+     * 曾经写成 `history[method].bind(history)` 再还原 —— 那是一个新函数对象，
+     * 于是每次 install/dispose 都会给 `pushState` 多套一层：
+     *   1. 宿主页面里任何「捕获原始 pushState 再比对/还原」的库（路由、埋点、
+     *      错误上报）都会失配，属于污染宿主页面；
+     *   2. 反复装卸会得到 `bound bound bound …` 无限增生的函数链。
+     * 单测 `tests/dom/writeback.test.ts` 用 `toBe` 身份比较把这条钉死了。
+     */
+    const original = history[method];
+    const patched = function (this: History, ...args: Parameters<History['pushState']>): void {
+      // 固定用 history 作接收者：History 方法只接受 History 实例，
+      // 调用方若把方法摘下来裸调（`const p = history.pushState; p(…)`），this 会是 undefined。
+      Reflect.apply(original, history, args);
       onUrlMaybeChanged();
     };
     history[method] = patched as History['pushState'];
     disposers.push(() => {
-      history[method] = original as History['pushState'];
+      // 只还原「还是我们自己套的那一层」。若期间有别的脚本又包了一层，
+      // 直接覆盖会把它们的补丁一起冲掉 —— 同样属于污染宿主页面。
+      if (history[method] === (patched as History['pushState'])) {
+        history[method] = original;
+      }
     });
   }
 

@@ -156,14 +156,32 @@ export function canWriteBack(input: {
 /**
  * 图片 URL 等价比较。
  *
- * `currentSrc` 可能被浏览器补全为绝对路径（`/a/b.png` → `https://host/a/b.png`），
- * 因此先用 `URL` 归一化；无法解析时退化为字符串全等。
+ * 语义边界（**故意从严**）：
+ *   1. 任一为空 → 不判等。原实现用 `a === b` 短路，会让两个空串「相等」。
+ *   2. 两侧都按**页面真实 base**（`document.baseURI`，可显式注入）解析后再比。
+ *      这样「页面里写 `src="/comic/003.png"`、浏览器把 `currentSrc` 补成绝对路径」
+ *      这一对能正确判等。
+ *   3. **跨站不判等**：`/comic/003.png` 与 `https://cdn.example.com/comic/003.png`
+ *      在无从得知基址时返回 `false`。这是 P0-1 的安全取向 ——
+ *      **错杀优于串图**：误判「不等」只会跳过这张并标记「原图已离开页面」
+ *      （可见、可恢复）；误判「相等」会把译文写到新页面的图上（静默串图）。
+ *
+ * 注意：这里**不做**启发式路径匹配（例如只比 `pathname`）。一旦放宽，
+ * `a.com/1.png` 与 `b.com/1.png` 会被判等，P0-1 就失去意义了。
  */
-export function sameImageUrl(a: string, b: string): boolean {
+export function sameImageUrl(a: string, b: string, base?: string): boolean {
+  if (!a || !b) return false;
   if (a === b) return true;
+
+  const resolvedBase =
+    base ?? (typeof document !== 'undefined' ? document.baseURI : undefined);
+
   try {
-    return new URL(a, 'http://127.0.0.1/').href === new URL(b, 'http://127.0.0.1/').href;
+    const ua = resolvedBase ? new URL(a, resolvedBase) : new URL(a);
+    const ub = resolvedBase ? new URL(b, resolvedBase) : new URL(b);
+    return ua.href === ub.href;
   } catch {
+    // 无 base 且任一侧是相对路径 → 无法断定相等，一律不判等（从严）
     return false;
   }
 }

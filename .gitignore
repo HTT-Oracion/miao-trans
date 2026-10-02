@@ -8,6 +8,9 @@ extension/.wxt/
 dist/
 *.zip
 
+# vite / vitest 转译配置时的临时产物（每次跑都会生成，不应入仓）
+*.timestamp-*.mjs
+
 # 运行期产物（mock service 的落盘根目录与任务清单）
 mock-service/.runtime/
 mock-service/state/
