@@ -356,7 +356,18 @@ export class BoxServiceClient {
         const e =
           err instanceof BoxServiceError ? err : BoxServiceError.network('追加批次失败');
         last = e;
-        // 只有「服务不可达」类错误值得重试；4xx 是确定性拒绝，重试无意义
+        /**
+         * 只有「服务不可达」类错误值得重试；4xx 是确定性拒绝，重试无意义。
+         *
+         * ⚠️ ver2.0 新错误码**刻意不在这里重试**：
+         *   - `ENGINE_NOT_READY`（《03》§2.3）：`meansServiceNotReady` 为 false（进程在、
+         *     只是未就绪），因此不会被自动重试 —— 这正是《01》§4.1 的要求
+         *     （「不排队、不缓存」「让用户准备好了再点一次」，不做自动重试）。
+         *   - `MODEL_DOWNLOAD_FAILED`（《03》§2.3）：同属确定性的就绪态失败，
+         *     重试同样的请求不会改变结果，应走「重新下载模型」的人工处置。
+         * 三处错误码流转（`handle` / `fetchLibraryFile` / SSE）都是 `body.error.code`
+         * 的**通用透传**，无需为新码补分支；分流统一在 `BoxServiceError` 的 getter 上做。
+         */
         if (!e.meansServiceNotReady) break;
         await sleep(300 * 2 ** i);
       }

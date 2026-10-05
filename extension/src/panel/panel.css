@@ -232,6 +232,11 @@
   color: var(--mt-error);
   border-color: var(--mt-error);
 }
+/* 引擎准备中（《01》§4.1）：进程在但未就绪 —— 用 warning 色，区别于「未运行」的 error 色 */
+.mt-panel__service--preparing {
+  color: var(--mt-warning);
+  border-color: var(--mt-warning);
+}
 
 .mt-progressbar {
   height: 2px;

@@ -14,8 +14,7 @@ import { browser } from 'wxt/browser';
 import type { ItemDto, QueueDto, SseEnvelope, TaskCreatedDto, TaskDto } from '../types/contract';
 import { BoxServiceError, SSE_STALE_MS, SSE_WATCHDOG_TICK_MS } from '../types/contract';
 import type { BgPush, BgRequest, BgResponse } from '../types/messages';
-import { isActive, type ClientState } from '../domain/clientState';
-import { DEMO_BYPASS_SERVICE_READY } from '../domain/demoMode';
+import { isActive, type ClientState, ERROR_COPY } from '../domain/clientState';
 import { collectOrderedImages, type PageImage } from '../collectImages';
 import { registry } from '../store/registry';
 import { batchActions } from '../store/translation/batchSlice';
@@ -155,16 +154,10 @@ export function usePanelController(
       }
 
       /**
-       * 演示模式（见 domain/demoMode.ts）：**仅当服务确实不在**时放开渲染门控
-       * （ready/hasToken 强制为 true、跳过任务恢复），让整体 UI 无后端也可预览。
-       * 刻意不做「无条件跳过」—— mock / 真实服务在场时必须走原路径，
-       * 否则令牌配对引导（e2e C1）和 P0-3 任务恢复都会被跳过。
+       * 原路径：探测命中 → 用**真实**探测结果（`ready = 命中 && 已配对`）；
+       * 探测不到 → `serviceLost()`（进程不在，《01》§4.4 左列）。
+       * 未配对时另弹配对引导（P0-3 的令牌配对引导行为，不得跳过）。
        */
-      if (DEMO_BYPASS_SERVICE_READY && (!discovered || !discovered.ready)) {
-        dispatch(batchActions.serviceDiscovered({ port: 0, hasToken: true, ready: true }));
-        return;
-      }
-
       if (discovered) {
         dispatch(
           batchActions.serviceDiscovered({ port: discovered.port ?? 0, hasToken: discovered.hasToken, ready: discovered.ready && discovered.hasToken }),
@@ -555,7 +548,25 @@ export function usePanelController(
         await sendBg({ type: 'TASK_WATCH_START', taskId: created.taskId, lastEventId: null });
       } catch (err) {
         const e = err instanceof BoxServiceError ? err : BoxServiceError.network(String(err));
-        dispatch(batchActions.submitFailed({ code: e.code, message: e.message, at: Date.now() }));
+        if (e.meansEnginePreparing) {
+          /**
+           * 《03》§2.3 `ENGINE_NOT_READY` + 《01》§4.1：「不排队、不缓存」。
+           *
+           * 因此**不建单、不落失败态**，只把渲染阶段切到「准备中」并把任务状态回收到
+           * 可选图态 —— 「确定」再次可点，用户准备完成后再提交一次（本迭代不做自动重试）。
+           * 《03》§4.5 把该码限定在「引擎未就绪时收到 `POST /tasks`」，此刻 `taskId`
+           * 必然尚未建立，因此这里无需保留任何在途任务上下文。
+           */
+          dispatch(batchActions.enginePreparing());
+        } else if (e.meansModelDownloadFailed) {
+          // 《03》§2.3 + 《01》§4.3：错误条「翻译模型下载失败或校验不通过」+ 日志入口，
+          // 主动作「打开 Box 重新下载模型」（下载入口在 Box 侧，插件只给文案与「重试」）。
+          dispatch(
+            batchActions.submitFailed({ code: e.code, message: ERROR_COPY.MODEL_DOWNLOAD_FAILED, at: Date.now() }),
+          );
+        } else {
+          dispatch(batchActions.submitFailed({ code: e.code, message: e.message, at: Date.now() }));
+        }
       } finally {
         setBusy(false);
       }
@@ -647,11 +658,6 @@ export function usePanelController(
       const data = await sendBg<{ ready: boolean; port: number | null; hasToken: boolean }>({
         type: 'SERVICE_DISCOVER',
       });
-      // 演示模式：服务确实不在时维持「已就绪」假象（与启动探测同一裁定）
-      if (DEMO_BYPASS_SERVICE_READY && !(data.ready && data.hasToken)) {
-        dispatch(batchActions.serviceDiscovered({ port: 0, hasToken: true, ready: true }));
-        return;
-      }
       dispatch(
         batchActions.serviceDiscovered({
           port: data.port ?? 0,
@@ -660,10 +666,7 @@ export function usePanelController(
         }),
       );
     } catch {
-      if (DEMO_BYPASS_SERVICE_READY) {
-        dispatch(batchActions.serviceDiscovered({ port: 0, hasToken: true, ready: true }));
-        return;
-      }
+      // 原路径：探测不到 → 进程不在（《01》§4.4 左列），渲染「服务未就绪」
       dispatch(batchActions.serviceLost());
     }
   }, [dispatch]);

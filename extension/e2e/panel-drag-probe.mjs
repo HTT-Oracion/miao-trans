@@ -9,7 +9,9 @@
  *   5. 收起后球位**由面板位置反算**（同侧、间距 12、底边对齐、在视口内）
  *   6. 再次点击球 → 面板回到收起前的位置（往返一致）
  *
- * 不需要 mock-service（演示模式下面板即可见），只起页面夹具。
+ * 需要 mock-service + 已完成令牌配对：ver2.0 起「服务未就绪」浮层是 `inset:0 /
+ * z-index:30` 的整面板遮罩，未配对时它会盖住面板头、吃掉拖动事件（演示旁路已删除，
+ * 见 README）。探针因此先起 mock 并完成配对，再进入拖动断言。
  * 用法：cd extension && node e2e/panel-drag-probe.mjs
  */
 import { chromium } from 'playwright';
@@ -21,6 +23,9 @@ import { spawn } from 'node:child_process';
 const REPO = path.resolve(import.meta.dirname, '..', '..');
 const EXT = path.resolve(REPO, 'extension', '.output', 'chrome-mv3');
 const PAGE_PORT = 5199;
+const MOCK_PORT = '5180';
+/** mock-service 默认令牌（见 README「本地测试配对令牌」） */
+const TOKEN = 'a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90';
 const OUT = '/tmp/miao-drag';
 fs.rmSync(OUT, { recursive: true, force: true });
 fs.mkdirSync(OUT, { recursive: true });
@@ -76,6 +81,15 @@ async function geo(page) {
 const near = (a, b, tol = 2) => Math.abs(a - b) <= tol;
 
 try {
+  // 先起 mock-service：ver2.0 起靠它让面板真的就绪（演示旁路已删除）
+  const mockRoot = path.join(tmp, 'Box 漫画');
+  const mockF = spawn('node', ['mock-service/src/server.mjs'], {
+    cwd: REPO,
+    env: { ...process.env, MOCK_PORT: String(MOCK_PORT), MOCK_ROOT: mockRoot },
+    stdio: 'pipe',
+  });
+  procs.push(mockF);
+
   const pageF = spawn('node', ['mock-service/src/page.mjs'], {
     cwd: REPO,
     env: { ...process.env, PAGE_PORT: String(PAGE_PORT) },
@@ -96,6 +110,18 @@ try {
   const page = await ctx.newPage();
   await page.goto(`http://127.0.0.1:${PAGE_PORT}/`, { waitUntil: 'domcontentloaded' });
   await sleep(1500);
+
+  // ── 0. 令牌配对（否则「服务未就绪」浮层会盖住面板头，拖动断言全部失效） ──
+  await page.locator('[data-testid="floating-ball"]').click();
+  await sleep(900);
+  const tokenInput = page.locator('input[placeholder="64 位十六进制令牌"]');
+  if ((await tokenInput.count()) > 0) {
+    await tokenInput.fill(TOKEN);
+    await page.getByRole('button', { name: '保存' }).click();
+    await sleep(900);
+  }
+  await page.locator('button[aria-label="收起面板"]').click();
+  await sleep(450);
 
   // ── 1. 默认态：只有球 ──
   let g = await geo(page);

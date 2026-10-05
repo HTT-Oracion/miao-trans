@@ -16,7 +16,14 @@ import type { Dispatch, UnknownAction } from '@reduxjs/toolkit';
 import { Input } from 'antd';
 
 import { GRID, MORE_MENU, PANEL } from '../theme/tokens';
-import { capabilitiesOf, cancelConfirmCopy, SERVICE_NOT_READY, type ClientState } from '../domain/clientState';
+import {
+  capabilitiesOf,
+  cancelConfirmCopy,
+  ENGINE_PREPARING,
+  serviceOverlayFor,
+  type ClientState,
+  type ServicePhase,
+} from '../domain/clientState';
 import { pagesWithSelection } from '../store/translation/selectionSlice';
 import {
   selectBatch,
@@ -41,6 +48,12 @@ import { logoUrl } from './assets';
 export interface PanelProps {
   dispatch: Dispatch<UnknownAction>;
   serviceReady: boolean;
+  /**
+   * 服务就绪阶段（ver2.0）—— 浮层按「未就绪 / 准备中」两态分流（《01》§4.4 判据）。
+   * 与 `serviceReady` 并存：`preparing` 时进程仍在（`serviceReady` 保持 true），
+   * 但引擎未就绪，必须渲染「准备中」而非「服务已就绪」。
+   */
+  servicePhase: ServicePhase;
   /** 服务端 progress 换算的比例（仅用于悬浮球；面板内不出现该数字以外的派生值） */
   progressRatio: number;
   /** 收起面板为悬浮球（真源在 PanelRoot.Dock）—— 收起时球位按面板位置反算 */
@@ -58,6 +71,7 @@ export interface PanelProps {
 export function Panel({
   dispatch,
   serviceReady,
+  servicePhase,
   progressRatio,
   onCollapse,
   dragging,
@@ -91,6 +105,13 @@ export function Panel({
   const caps = capabilitiesOf(batch.state);
   const state: ClientState = batch.state;
 
+  /** 两态浮层文案：`ready` → null（无浮层）；`absent` → 服务未就绪；`preparing` → 引擎准备中 */
+  const overlayCopy = serviceOverlayFor(servicePhase);
+  const preparing = servicePhase === 'preparing';
+  /** 面板头徽标三值 —— 进程维度（已就绪 / 未就绪）与引擎维度（准备中）分开表达 */
+  const serviceBadge = preparing ? '引擎准备中' : serviceReady ? '服务已就绪' : '服务未就绪';
+  const serviceBadgeKind = preparing ? 'preparing' : serviceReady ? 'ok' : 'down';
+
   const selecting = state === 'idle';
   const showSelectionToolbar = selecting;
   const cancelCopy = cancelConfirmCopy(state, batch.progress?.done ?? 0);
@@ -116,8 +137,8 @@ export function Panel({
           <strong className="mt-panel__title">喵译</strong>
           <span className="mt-panel__subtitle">漫画就地翻译</span>
         </div>
-        <span className={`mt-panel__service mt-panel__service--${serviceReady ? 'ok' : 'down'}`}>
-          {serviceReady ? '服务已就绪' : '服务未就绪'}
+        <span className={`mt-panel__service mt-panel__service--${serviceBadgeKind}`}>
+          {serviceBadge}
         </span>
         <button type="button" className="mt-iconbtn" aria-label="收起面板" onClick={onCollapse}>
           <IconClose size={14} />
@@ -163,7 +184,8 @@ export function Panel({
 
       {/* ── 提示行 48 ── */}
       <section className="mt-panel__hintrow" style={{ height: PANEL.hintRow }} data-testid="hint-row">
-        {hint.magicCircle && (
+        {/* 《01》§4.1：准备中态的提示行左侧同样用 24px 小魔法阵（沿 ver1.0 全局状态标识） */}
+        {(hint.magicCircle || preparing) && (
           <MagicCircle size={24} spin={hint.spin} />
         )}
         <div className="mt-hinttext">
@@ -174,7 +196,13 @@ export function Panel({
               <span className="mt-cjk">{hint.count.unit}</span>
             </>
           ) : (
-            <span className="mt-cjk">{hint.text || (ctl.notice ?? '')}</span>
+            <span
+              className="mt-cjk"
+              data-testid={preparing ? 'engine-preparing-hint' : undefined}
+            >
+              {/* 《01》§4.1：准备中态提示行文案「正在准备翻译引擎…」（逐字，不得改写） */}
+              {hint.text || (preparing ? ENGINE_PREPARING.title : '') || (ctl.notice ?? '')}
+            </span>
           )}
         </div>
         {hint.action && cancelCopy && (
@@ -363,22 +391,37 @@ export function Panel({
         </div>
       </footer>
 
-      {/* ── 浮层：服务未就绪 ── */}
-      {!serviceReady && (
-        <div className="mt-overlay" data-testid="service-not-ready">
+      {/* ── 浮层：服务未就绪 / 引擎准备中（两态，不得混用 ——《01》§4.4 判据） ── */}
+      {overlayCopy && (
+        <div
+          className="mt-overlay"
+          data-testid={preparing ? 'engine-preparing' : 'service-not-ready'}
+          data-phase={overlayCopy.phase}
+        >
           <div className="mt-overlay__card">
             <img src={logoUrl(20)} alt="" width={20} height={20} />
-            <h4>{SERVICE_NOT_READY.title}</h4>
+            <h4>{overlayCopy.title}</h4>
             <p className="mt-overlay__hint">
-              请在 Box 中启动本地翻译服务后重试。首版不支持协议唤起，需要你手动打开 Box。
+              {preparing
+                ? /* 「首张稍慢，后续加快」是**预期行为**，不得做成错误/警告样式（《01》§4.2） */
+                  ENGINE_PREPARING.slowFirst
+                : '请在 Box 中启动本地翻译服务后重试。首版不支持协议唤起，需要你手动打开 Box。'}
             </p>
             <div className="mt-overlay__actions">
+              {/*
+                按钮名取 `actionLabel` 而非 `primary`：未就绪态的规格名为「启动 Box」，
+                但首版不实现 box:// 唤起（P2-03，见 SERVICE_NOT_READY.specConflict），
+                故实际渲染为「重试连接」；准备中态则只有「重试」（§4.4：无「启动 Box」）。
+              */}
               <button type="button" className="mt-primarybtn" onClick={() => void ctl.onRetryService()}>
-                {SERVICE_NOT_READY.primary === '启动 Box' ? '重试连接' : SERVICE_NOT_READY.primary}
+                {overlayCopy.actionLabel}
               </button>
-              <button type="button" className="mt-ghostbtn" onClick={() => ctl.setTokenDialogOpen(true)}>
-                配对令牌
-              </button>
+              {/* 配对令牌是「进程在但令牌无效」的补救入口；准备中态进程已在，此入口不适用 */}
+              {overlayCopy.phase === 'absent' && (
+                <button type="button" className="mt-ghostbtn" onClick={() => ctl.setTokenDialogOpen(true)}>
+                  配对令牌
+                </button>
+              )}
             </div>
           </div>
         </div>

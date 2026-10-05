@@ -7,8 +7,10 @@
  *
  * 注意：「服务未就绪」**不是**这 8 态之一（它在《03》§4.3 表里没有）。
  * 《01》§7 把它列在同一张表里，属于**渲染条件**而非状态机的态 ——
- * 因此这里独立建模为 `serviceReady`，避免把它混进转移图、造成
- * 「服务未就绪 → 提交」这类不存在的转移被写出来。
+ * 因此这里独立建模为 `servicePhase`（ver2.0 起由 ver1.0 的布尔 `serviceReady`
+ * 扩为 `ready/absent/preparing` 三值，仍**不进**转移图），避免把它混进转移图、
+ * 造成「服务未就绪 → 提交」这类不存在的转移被写出来。
+ * 《03》§4.5 同旨：「引擎的『准备/卸载/降档』都**不新增客户端状态机节点**」。
  */
 
 import type { ApiErrorCode, TaskStatus } from '../types/contract';
@@ -370,7 +372,7 @@ export function cancelConfirmCopy(state: ClientState, doneCount: number): {
   return null;
 }
 
-/** 错误码 → 面板内文案（《03》§2.2「客户端处理」列） */
+/** 错误码 → 面板内文案（《03》§2.2 / §2.3「客户端处理」列） */
 export const ERROR_COPY: Record<ApiErrorCode, string> = {
   BATCH_LIMIT_EXCEEDED: '单次最多提交 20 张',
   COMIC_NAME_REQUIRED: '请填写漫画名',
@@ -385,18 +387,81 @@ export const ERROR_COPY: Record<ApiErrorCode, string> = {
   PERMISSION_DENIED: '令牌无效，请到 Box 设置里重新配对',
   UNAVAILABLE: '本地翻译服务未就绪',
   INTERNAL: '服务内部错误',
+  // —— ver2.0 新增（《03》§2.3，《01》§4.3）——
+  /** §4.3：提示行「正在准备翻译引擎…」（见 §4.1），主动作「重试」 */
+  ENGINE_NOT_READY: '正在准备翻译引擎…',
+  /** §4.3：错误条「翻译模型下载失败或校验不通过」+ 日志入口；主动作「打开 Box 重新下载模型」 */
+  MODEL_DOWNLOAD_FAILED: '翻译模型下载失败或校验不通过',
 };
 
-/** 服务未就绪态的文案（《01》§7 末行） */
+/**
+ * 服务就绪阶段 —— **渲染条件**，不是状态机的节点（沿用本文件头注释的建模口径）。
+ *
+ * - `ready`    进程在、已配对、引擎可用 → 不渲染任何浮层
+ * - `absent`   进程**不在** → 「服务未就绪」（《01》§4.4 左列）
+ * - `preparing` 进程**在**但引擎未就绪 → 「准备中」（《01》§4.4 中列 / 《03》§2.3）
+ *
+ * 触发路径：`absent` 来自端口探测失败（`serviceLost`）；`preparing` 来自
+ * `POST /tasks` 返回 `503 ENGINE_NOT_READY`（《01》§4.1「触发」行）。
+ */
+export type ServicePhase = 'ready' | 'absent' | 'preparing';
+
+/**
+ * 「服务未就绪」态的文案（《01》§7 末行 / §4.4 左列）。
+ *
+ * = 引擎进程**不在**（用户没启动 Box，或 Box 已退出）。
+ */
 export const SERVICE_NOT_READY = {
+  phase: 'absent',
   title: '本地翻译服务未运行',
+  /** 《01》§4.4 左列的主按钮名 */
   primary: '启动 Box',
-  secondary: '重试',
   /**
+   * 面板**实际渲染**的按钮名。
+   *
    * 规格内部矛盾（已记录，待拍板）：P2-03 / 《01》§待确认 6 明确「首版不做 `box://`
    * 协议唤起」，界面却把按钮命名为「启动 Box」—— 按钮名是一个承诺，首版兑现不了。
-   * 用户已指示本轮先搁置该议题，因此这里按规格原样实现，仅在文档中标注风险。
+   * 用户已指示本轮先搁置该议题，因此这里按规格原样实现 `primary`，仅把渲染名退化为
+   * 「重试连接」（点击仍是重新探测服务），并在文档中标注风险。
    */
+  actionLabel: '重试连接',
+  secondary: '重试',
   specConflict:
     '首版不实现 box:// 协议唤起（P2-03），该按钮当前仅能给出手把手引导；建议后续改为「如何启动 Box」或补 box:// 支持。',
 } as const;
+
+/**
+ * 「引擎准备中」态的文案（《01》§4.1 / §4.4 中列；《03》§2.3）。
+ *
+ * = 引擎进程**在**但处于 `starting` / `downloading` / `prewarming`（首次使用、
+ * 或长时间闲置后被卸载再唤醒）。
+ *
+ * **不得**与 `SERVICE_NOT_READY` 混用（《03》§2.3 边界 / 《01》§4.4 判据）；
+ * 因此这里**没有**「启动 Box」按钮，只给「重试」+ 等待语义。
+ */
+export const ENGINE_PREPARING = {
+  phase: 'preparing',
+  /** 《01》§4.1 提示行文案（逐字，不得改写） */
+  title: '正在准备翻译引擎…',
+  /** 主动作：只给「重试」（§4.4 中列：**无「启动 Box」**） */
+  primary: '重试',
+  actionLabel: '重试',
+  /** §4.1 交互：提示「准备完成后请重新提交」（不排队、不缓存） */
+  secondary: '准备完成后请重新提交',
+  /** 《01》§4.2 / §4.3 文案（逐字，不得改写）：预期行为，不得做成错误 / 警告样式 */
+  slowFirst: '首张稍慢，后续加快',
+} as const;
+
+/** 两态的并集（`serviceOverlayFor` 的返回类型） */
+export type ServiceStateCopy = typeof SERVICE_NOT_READY | typeof ENGINE_PREPARING;
+
+/**
+ * 阶段 → 浮层文案。`ready` 返回 null（无可渲染的浮层）。
+ *
+ * 这是「两态不得混用」的**唯一**分流点（《01》§4.4 判据）。
+ */
+export function serviceOverlayFor(phase: ServicePhase): ServiceStateCopy | null {
+  if (phase === 'absent') return SERVICE_NOT_READY;
+  if (phase === 'preparing') return ENGINE_PREPARING;
+  return null;
+}

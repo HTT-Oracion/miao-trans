@@ -1,5 +1,9 @@
 /**
- * 服务端契约类型 —— 唯一依据《03-翻译服务接口契约-ver1.0.md》。
+ * 服务端契约类型 —— 唯一依据《03-翻译服务接口契约》。
+ *
+ * ver1.0 的字段 / 枚举 / 常量逐条映射；ver2.0 只增量补入《03》§2.3 的 2 个新错误码
+ * （`ENGINE_NOT_READY` / `MODEL_DOWNLOAD_FAILED`），其余沿 ver1.0 不变
+ * （《03》§2.2「13 条不变」+ §3/§4「数据结构与状态机不变」）。
  *
  * 本文件是插件侧对契约的**逐条映射**：字段名、枚举值、常量与错误码一字不改。
  * 契约变更时先改这里，再改实现（《03》§10 契约变更纪律）。
@@ -222,8 +226,12 @@ export interface UploadImage {
   sourceUrl: string;
 }
 
-// ─────────────────────────── 错误码（《03》§2.2） ───────────────────────────
+// ─────────────────────────── 错误码（《03》§2.2 + §2.3） ───────────────────────────
 
+/**
+ * ver1.0 的 13 条（《03》§2.2）**逐字保留**，另加 ver2.0 新增的 2 条（《03》§2.3：
+ * `ENGINE_NOT_READY` / `MODEL_DOWNLOAD_FAILED`）。顺序按契约原文排列。
+ */
 export const API_ERROR_CODES = [
   'BATCH_LIMIT_EXCEEDED',
   'COMIC_NAME_REQUIRED',
@@ -238,11 +246,14 @@ export const API_ERROR_CODES = [
   'PERMISSION_DENIED',
   'UNAVAILABLE',
   'INTERNAL',
+  // —— ver2.0 新增（《03》§2.3）——
+  'ENGINE_NOT_READY',
+  'MODEL_DOWNLOAD_FAILED',
 ] as const;
 
 export type ApiErrorCode = (typeof API_ERROR_CODES)[number];
 
-/** 《03》§2.2 的 HTTP 状态映射（客户端据此判断是否需要重新配对 / 切换未就绪态） */
+/** 《03》§2.2 / §2.3 的 HTTP 状态映射（客户端据此判断是否需要重新配对 / 切换未就绪态） */
 export const API_ERROR_HTTP: Record<ApiErrorCode, number> = {
   BATCH_LIMIT_EXCEEDED: 400,
   COMIC_NAME_REQUIRED: 400,
@@ -257,6 +268,9 @@ export const API_ERROR_HTTP: Record<ApiErrorCode, number> = {
   PERMISSION_DENIED: 403,
   UNAVAILABLE: 503,
   INTERNAL: 500,
+  // —— ver2.0 新增（《03》§2.3）——
+  ENGINE_NOT_READY: 503,
+  MODEL_DOWNLOAD_FAILED: 503,
 };
 
 /** 《03》§2.2：统一错误信封，**不为任何端点保留平铺结构** */
@@ -307,7 +321,13 @@ export class BoxServiceError extends Error {
     return new BoxServiceError('TIMEOUT', message, 0);
   }
 
-  /** 该错误是否应当让面板切到「服务未就绪」态（《03》§2.2 + 《01》§7） */
+  /**
+   * 该错误是否应当让面板切到「服务未就绪」态（《03》§2.2 + 《01》§7）。
+   *
+   * **边界（《03》§2.3 逐字）**：`UNAVAILABLE` 是**进程不在**（用户需启动 Box）；
+   * `ENGINE_NOT_READY` 是**进程在但未就绪**（用户只需等待）。两者文案不同，
+   * 不可混用 —— 因此 `ENGINE_NOT_READY` **刻意不在此列**，见 `meansEnginePreparing`。
+   */
   get meansServiceNotReady(): boolean {
     return (
       this.code === 'UNAVAILABLE' ||
@@ -315,6 +335,29 @@ export class BoxServiceError extends Error {
       this.code === 'TIMEOUT' ||
       this.status === 0
     );
+  }
+
+  /**
+   * 该错误是否应切「引擎准备中」态（《03》§2.3 `ENGINE_NOT_READY`）。
+   *
+   * 触发条件逐字取自契约：「引擎处于 `starting` / `prewarming` / `downloading` 时
+   * 收到任务」→ 503。处置（《03》§2.3 客户端处理列）：「面板切『准备中』+ 进度；
+   * **不排队、不缓存**」；《01》§4.1 补一句交互：「确定」回到可点态、提示
+   * 「准备完成后请重新提交」。
+   *
+   * 与 `meansServiceNotReady` 的区别**必须**保持**互斥**：前者是进程不在（给「启动 Box」），
+   * 本项是进程在但未就绪（只给等待 / 重试，不给「启动 Box」）。
+   */
+  get meansEnginePreparing(): boolean {
+    return this.code === 'ENGINE_NOT_READY';
+  }
+
+  /**
+   * 模型缺失或 SHA256 校验失败（《03》§2.3 `MODEL_DOWNLOAD_FAILED`，503）。
+   * 处置：「引导『重新下载模型』+ 日志入口」（《01》§4.3 主动作「打开 Box 重新下载模型」+「重试」）。
+   */
+  get meansModelDownloadFailed(): boolean {
+    return this.code === 'MODEL_DOWNLOAD_FAILED';
   }
 
   /** 该错误是否应当引导用户重新配对（《03》§2.2 PERMISSION_DENIED 的处置） */

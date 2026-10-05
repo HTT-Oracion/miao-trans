@@ -8,7 +8,7 @@
 
 import { createSlice, type PayloadAction } from '@reduxjs/toolkit';
 import type { BatchDto, ItemDto, ProgressDto, TaskDto, TaskStatus } from '../../types/contract';
-import { clientStateFromTaskStatus, type ClientState } from '../../domain/clientState';
+import { clientStateFromTaskStatus, type ClientState, type ServicePhase } from '../../domain/clientState';
 
 export interface BatchErrorInfo {
   code: string;
@@ -21,6 +21,13 @@ export interface BatchState {
   state: ClientState;
   /** 服务未就绪是**渲染条件**，不是状态机的一个态（详见 domain/clientState.ts 头注释） */
   serviceReady: boolean;
+  /**
+   * 服务就绪阶段（ver2.0 起由布尔扩为三值）—— 浮层按它分流两态（《01》§4.4 判据）：
+   * `absent` = 进程不在（给「启动 Box」）；`preparing` = 进程在但引擎未就绪（只给等待/重试）。
+   * 与 `serviceReady` 并存的理由：`serviceReady` 表达的是「服务可达且已配对」（进程维度），
+   * `preparing` 时进程仍在、`serviceReady` 保持 true，但引擎不可用 —— 两者不可互推。
+   */
+  servicePhase: ServicePhase;
   servicePort: number | null;
   /** 已配对的令牌是否存在（缺失 → 引导配对） */
   hasToken: boolean;
@@ -62,6 +69,7 @@ export interface BatchState {
 const initialState: BatchState = {
   state: 'idle',
   serviceReady: false,
+  servicePhase: 'absent',
   servicePort: null,
   hasToken: false,
   taskId: null,
@@ -96,9 +104,27 @@ const slice = createSlice({
       s.servicePort = a.payload.port;
       s.hasToken = a.payload.hasToken;
       s.serviceReady = a.payload.ready;
+      // 探测命中且已就绪（进程在 + 已配对）→ 清空浮层；否则沿 ver1.0 行为渲染
+      // 「服务未就绪」浮层（未配对时另弹配对引导）。这里**不**推测「进程在但引擎未就绪」——
+      // 插件按 §5.1 不读 sidecar 字段，「准备中」只由 503 ENGINE_NOT_READY 触发（§4.1）。
+      s.servicePhase = a.payload.ready ? 'ready' : 'absent';
     },
     serviceLost(s) {
       s.serviceReady = false;
+      // 端口探测全段未命中 = 进程不在（《01》§4.4 判据）→ 「服务未就绪」
+      s.servicePhase = 'absent';
+    },
+    /**
+     * 引擎在途未就绪（《03》§2.3 `ENGINE_NOT_READY`）。
+     *
+     * 「不排队、不缓存」（契约客户端处理列）→ **不建单**，因此任务状态回到可选图态
+     * （「确定」再次可点），只把渲染阶段切到「准备中」。`serviceReady` 保持原值 ——
+     * 进程仍在，这不是「服务未运行」。
+     */
+    enginePreparing(s) {
+      s.servicePhase = 'preparing';
+      s.state = 'idle';
+      s.error = null;
     },
     tokenSaved(s, a: PayloadAction<boolean>) {
       s.hasToken = a.payload;
@@ -124,6 +150,9 @@ const slice = createSlice({
      */
     taskCreated(s, a: PayloadAction<TaskDto>) {
       const t = a.payload;
+      // 建单成功 = 引擎已接收任务（拿到了 taskId / 序号）→ 「准备中」浮层必须解除。
+      // 否则用户在引擎转好后重试提交，浮层（inset:0 / z-index:30）会一直盖住运行中的面板。
+      s.servicePhase = 'ready';
       s.taskId = t.taskId;
       s.normalizedComicName = t.normalizedComicName ?? null;
       s.outputDir = t.outputDir ?? null;
@@ -241,7 +270,13 @@ const slice = createSlice({
 
     /** 回到选图态（结果态后关闭 / 重新开始） */
     resetToIdle(s) {
-      return { ...initialState, serviceReady: s.serviceReady, servicePort: s.servicePort, hasToken: s.hasToken };
+      return {
+        ...initialState,
+        serviceReady: s.serviceReady,
+        servicePhase: s.servicePhase,
+        servicePort: s.servicePort,
+        hasToken: s.hasToken,
+      };
     },
   },
 });

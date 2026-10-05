@@ -160,6 +160,7 @@ function Dock({ theme }: { theme: 'light' | 'dark' }) {
           <Panel
             dispatch={dispatch}
             serviceReady={batch.serviceReady}
+            servicePhase={batch.servicePhase}
             progressRatio={progressRatio}
             onCollapse={collapse}
             dragging={panelDrag.dragging}
