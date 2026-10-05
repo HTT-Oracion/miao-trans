@@ -250,6 +250,26 @@
   transition: width 0.3s ease;
 }
 
+/**
+ * 《01》§4.2「首张稍慢，后续加快」—— `running` 第 1 张的辅助文案。
+ *
+ * 不参与流式布局：面板几何钉死 680，网格区是唯一可收缩分区，一旦被挤就会裁掉
+ * 第 4 行缩略图；因此这一行浮在网格区顶部内边距（16px）上，`top` 由 Panel 按令牌算出。
+ * 颜色用常规辅助文案色 —— 它是**预期行为**，不得做成错误 / 警告样式（§4.2 末注）。
+ */
+.mt-slowfirst {
+  position: absolute;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: center;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--mt-muted);
+  pointer-events: none;
+  z-index: 2;
+}
+
 .mt-panel__namerow {
   display: flex;
   align-items: flex-start;

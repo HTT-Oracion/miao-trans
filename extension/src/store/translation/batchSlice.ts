@@ -7,7 +7,14 @@
  */
 
 import { createSlice, type PayloadAction } from '@reduxjs/toolkit';
-import type { BatchDto, ItemDto, ProgressDto, TaskDto, TaskStatus } from '../../types/contract';
+import type {
+  BatchDto,
+  EnginePreparingState,
+  ItemDto,
+  ProgressDto,
+  TaskDto,
+  TaskStatus,
+} from '../../types/contract';
 import { clientStateFromTaskStatus, type ClientState, type ServicePhase } from '../../domain/clientState';
 
 export interface BatchErrorInfo {
@@ -28,6 +35,12 @@ export interface BatchState {
    * `preparing` 时进程仍在、`serviceReady` 保持 true，但引擎不可用 —— 两者不可互推。
    */
   servicePhase: ServicePhase;
+  /**
+   * 「准备中」的阶段（`details.sidecar.state`）—— 只用于浮层**副行**文案
+   * （《01》§4.1：`prewarming`→「正在预热」，`starting`/`downloading`→「正在准备翻译模型」）。
+   * `null` = 服务端没给 / 取值不在白名单 → **不猜阶段**，副行留空。
+   */
+  enginePreparingState: EnginePreparingState | null;
   servicePort: number | null;
   /** 已配对的令牌是否存在（缺失 → 引导配对） */
   hasToken: boolean;
@@ -70,6 +83,7 @@ const initialState: BatchState = {
   state: 'idle',
   serviceReady: false,
   servicePhase: 'absent',
+  enginePreparingState: null,
   servicePort: null,
   hasToken: false,
   taskId: null,
@@ -108,11 +122,13 @@ const slice = createSlice({
       // 「服务未就绪」浮层（未配对时另弹配对引导）。这里**不**推测「进程在但引擎未就绪」——
       // 插件按 §5.1 不读 sidecar 字段，「准备中」只由 503 ENGINE_NOT_READY 触发（§4.1）。
       s.servicePhase = a.payload.ready ? 'ready' : 'absent';
+      s.enginePreparingState = null;
     },
     serviceLost(s) {
       s.serviceReady = false;
       // 端口探测全段未命中 = 进程不在（《01》§4.4 判据）→ 「服务未就绪」
       s.servicePhase = 'absent';
+      s.enginePreparingState = null;
     },
     /**
      * 引擎在途未就绪（《03》§2.3 `ENGINE_NOT_READY`）。
@@ -120,9 +136,12 @@ const slice = createSlice({
      * 「不排队、不缓存」（契约客户端处理列）→ **不建单**，因此任务状态回到可选图态
      * （「确定」再次可点），只把渲染阶段切到「准备中」。`serviceReady` 保持原值 ——
      * 进程仍在，这不是「服务未运行」。
+     *
+     * `state` 来自 `details.sidecar.state`（取不到为 null）—— 只影响副行，不影响切态。
      */
-    enginePreparing(s) {
+    enginePreparing(s, a: PayloadAction<{ state: EnginePreparingState | null }>) {
       s.servicePhase = 'preparing';
+      s.enginePreparingState = a.payload.state;
       s.state = 'idle';
       s.error = null;
     },
@@ -153,6 +172,7 @@ const slice = createSlice({
       // 建单成功 = 引擎已接收任务（拿到了 taskId / 序号）→ 「准备中」浮层必须解除。
       // 否则用户在引擎转好后重试提交，浮层（inset:0 / z-index:30）会一直盖住运行中的面板。
       s.servicePhase = 'ready';
+      s.enginePreparingState = null;
       s.taskId = t.taskId;
       s.normalizedComicName = t.normalizedComicName ?? null;
       s.outputDir = t.outputDir ?? null;
@@ -274,6 +294,7 @@ const slice = createSlice({
         ...initialState,
         serviceReady: s.serviceReady,
         servicePhase: s.servicePhase,
+        enginePreparingState: s.enginePreparingState,
         servicePort: s.servicePort,
         hasToken: s.hasToken,
       };

@@ -51,10 +51,19 @@ export type BgRequest =
   | { type: 'ACTIVE_TASK_GET' }
   | { type: 'ACTIVE_TASK_CLEAR' };
 
-/** background → 面板的应答 */
+/**
+ * background → 面板的应答。
+ *
+ * `error.details` 必须原样透传（不能只留 code/message/status）：ver2.0 的
+ * `ENGINE_NOT_READY` 靠 `details.sidecar.state` 决定准备中浮层的**阶段副行**
+ * （《01》§4.1）；丢掉 details 会让该功能「写完了但永远显示兜底文案」。
+ */
 export type BgResponse<T = unknown> =
   | { ok: true; data: T }
-  | { ok: false; error: { code: string; message: string; status: number } };
+  | {
+      ok: false;
+      error: { code: string; message: string; status: number; details?: Record<string, unknown> };
+    };
 
 /** background → 面板的主动推送（不请自来） */
 export type BgPush =

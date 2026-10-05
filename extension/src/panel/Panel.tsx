@@ -20,7 +20,10 @@ import {
   capabilitiesOf,
   cancelConfirmCopy,
   ENGINE_PREPARING,
+  preparingSubline,
   serviceOverlayFor,
+  showsSlowFirstImageHint,
+  SLOW_FIRST_IMAGE_HINT,
   type ClientState,
   type ServicePhase,
 } from '../domain/clientState';
@@ -108,6 +111,13 @@ export function Panel({
   /** 两态浮层文案：`ready` → null（无浮层）；`absent` → 服务未就绪；`preparing` → 引擎准备中 */
   const overlayCopy = serviceOverlayFor(servicePhase);
   const preparing = servicePhase === 'preparing';
+  /** 准备中浮层的**阶段副行**（《01》§4.1）——取不到阶段时为 null（不猜） */
+  const preparingSub = preparingSubline(batch.enginePreparingState);
+  /**
+   * 《01》§4.2 / 《04》§5.3：「首张稍慢，后续加快」只在 `running` 且**当前正在处理第 1 张**
+   * 时出现（判据取服务端 `progress.current === 1`），第 2 张起消失。
+   */
+  const showSlowFirst = showsSlowFirstImageHint({ state: batch.state, current: batch.progress?.current });
   /** 面板头徽标三值 —— 进程维度（已就绪 / 未就绪）与引擎维度（准备中）分开表达 */
   const serviceBadge = preparing ? '引擎准备中' : serviceReady ? '服务已就绪' : '服务未就绪';
   const serviceBadgeKind = preparing ? 'preparing' : serviceReady ? 'ok' : 'down';
@@ -149,6 +159,24 @@ export function Panel({
       {(state === 'running' || state === 'submitting') && (
         <div className="mt-progressbar" data-testid="top-progress" role="progressbar" aria-valuemin={0} aria-valuemax={100}>
           <span className="mt-progressbar__fill" style={{ width: `${Math.round(progressRatio * 100)}%` }} />
+        </div>
+      )}
+
+      {/*
+        ── 「首张稍慢，后续加快」（《01》§4.2 / 《04》§5.3 / 《09》L4）──
+        仅 `running` 且当前为第 1 张时出现，第 2 张起消失；属**预期行为**，
+        用常规辅助文案色（不得做成错误 / 警告样式）。
+        面板几何钉死 680（七屏一致），而网格区是**唯一可收缩分区**（一收缩就会
+        裁掉第 4 行缩略图并出现滚动条），因此这一行不参与流式布局，浮在网格区
+        顶部内边距上 —— 不挤压任何分区，实现「全局进度条下方一行辅助文案」。
+      */}
+      {showSlowFirst && (
+        <div
+          className="mt-slowfirst"
+          data-testid="slow-first-hint"
+          style={{ top: PANEL.header + 2 + PANEL.nameRow + PANEL.hintRow + PANEL.toolbar }}
+        >
+          {SLOW_FIRST_IMAGE_HINT}
         </div>
       )}
 
@@ -401,12 +429,21 @@ export function Panel({
           <div className="mt-overlay__card">
             <img src={logoUrl(20)} alt="" width={20} height={20} />
             <h4>{overlayCopy.title}</h4>
-            <p className="mt-overlay__hint">
-              {preparing
-                ? /* 「首张稍慢，后续加快」是**预期行为**，不得做成错误/警告样式（《01》§4.2） */
-                  ENGINE_PREPARING.slowFirst
-                : '请在 Box 中启动本地翻译服务后重试。首版不支持协议唤起，需要你手动打开 Box。'}
-            </p>
+            {/*
+              「准备中」的副行必须按**引擎阶段**走（《01》§4.1：「副行按阶段显示
+              『正在准备翻译模型』/『正在预热』」）；取不到阶段就不渲染副行，**不猜**。
+            */}
+            {preparing ? (
+              preparingSub && (
+                <p className="mt-overlay__hint" data-testid="engine-preparing-subline">
+                  {preparingSub}
+                </p>
+              )
+            ) : (
+              <p className="mt-overlay__hint">
+                请在 Box 中启动本地翻译服务后重试。首版不支持协议唤起，需要你手动打开 Box。
+              </p>
+            )}
             <div className="mt-overlay__actions">
               {/*
                 按钮名取 `actionLabel` 而非 `primary`：未就绪态的规格名为「启动 Box」，

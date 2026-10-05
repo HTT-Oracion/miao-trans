@@ -257,7 +257,12 @@ export class BoxServiceClient {
           body = null;
         }
         if (isApiErrorEnvelope(body)) {
-          throw new BoxServiceError(body.error.code, body.error.message, res.status);
+          throw new BoxServiceError(
+            body.error.code,
+            body.error.message,
+            res.status,
+            body.error.details ?? {},
+          );
         }
         throw new BoxServiceError('INTERNAL', `读取文件失败（HTTP ${res.status}）`, res.status);
       }
@@ -578,7 +583,12 @@ export function subscribeTaskEvents(
             body = null;
           }
           if (isApiErrorEnvelope(body)) {
-            throw new BoxServiceError(body.error.code, body.error.message, res.status);
+            throw new BoxServiceError(
+              body.error.code,
+              body.error.message,
+              res.status,
+              body.error.details ?? {},
+            );
           }
           throw new BoxServiceError('INTERNAL', `事件流连接失败（HTTP ${res.status}）`, res.status);
         }

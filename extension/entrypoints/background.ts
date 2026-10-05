@@ -172,7 +172,12 @@ function ok<T>(data: T): BgResponse<T> {
 
 function fail(err: unknown): BgResponse {
   if (err instanceof BoxServiceError) {
-    return { ok: false, error: { code: err.code, message: err.message, status: err.status } };
+    // details 必须一起回传：`ENGINE_NOT_READY` 的阶段副行取 `details.sidecar.state`
+    // （《01》§4.1 / 《03》§2.3）。在这里截断，面板侧就永远拿不到阶段。
+    return {
+      ok: false,
+      error: { code: err.code, message: err.message, status: err.status, details: err.details },
+    };
   }
   const e = err as { message?: string };
   return { ok: false, error: { code: 'INTERNAL', message: e?.message ?? '未知错误', status: 0 } };

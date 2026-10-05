@@ -12,7 +12,7 @@ import type { Dispatch, UnknownAction } from '@reduxjs/toolkit';
 import { browser } from 'wxt/browser';
 
 import type { ItemDto, QueueDto, SseEnvelope, TaskCreatedDto, TaskDto } from '../types/contract';
-import { BoxServiceError, SSE_STALE_MS, SSE_WATCHDOG_TICK_MS } from '../types/contract';
+import { BoxServiceError, SSE_STALE_MS, SSE_WATCHDOG_TICK_MS, enginePreparingStateOf } from '../types/contract';
 import type { BgPush, BgRequest, BgResponse } from '../types/messages';
 import { isActive, type ClientState, ERROR_COPY } from '../domain/clientState';
 import { collectOrderedImages, type PageImage } from '../collectImages';
@@ -33,7 +33,10 @@ import { uuidV4 } from '../adapters/boxServiceClient';
 export async function sendBg<T = unknown>(req: BgRequest): Promise<T> {
   const res = (await browser.runtime.sendMessage(req)) as BgResponse<T> | undefined;
   if (!res) throw BoxServiceError.network('后台无响应（服务可能已重启）');
-  if (!res.ok) throw new BoxServiceError(res.error.code, res.error.message, res.error.status);
+  // details 必须一起还原：ver2.0 的「准备中」阶段副行读 `details.sidecar.state`
+  if (!res.ok) {
+    throw new BoxServiceError(res.error.code, res.error.message, res.error.status, res.error.details ?? {});
+  }
   return res.data;
 }
 
@@ -556,8 +559,11 @@ export function usePanelController(
            * 可选图态 —— 「确定」再次可点，用户准备完成后再提交一次（本迭代不做自动重试）。
            * 《03》§4.5 把该码限定在「引擎未就绪时收到 `POST /tasks`」，此刻 `taskId`
            * 必然尚未建立，因此这里无需保留任何在途任务上下文。
+           *
+           * 把 `details.sidecar.state` 一并带进 store：浮层**副行**要按阶段显示
+           * 《01》§4.1 的两句（「正在准备翻译模型」/「正在预热」），取不到则不猜。
            */
-          dispatch(batchActions.enginePreparing());
+          dispatch(batchActions.enginePreparing({ state: enginePreparingStateOf(e.details) }));
         } else if (e.meansModelDownloadFailed) {
           // 《03》§2.3 + 《01》§4.3：错误条「翻译模型下载失败或校验不通过」+ 日志入口，
           // 主动作「打开 Box 重新下载模型」（下载入口在 Box 侧，插件只给文案与「重试」）。

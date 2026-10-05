@@ -13,7 +13,7 @@
  * 《03》§4.5 同旨：「引擎的『准备/卸载/降档』都**不新增客户端状态机节点**」。
  */
 
-import type { ApiErrorCode, TaskStatus } from '../types/contract';
+import type { ApiErrorCode, EnginePreparingState, TaskStatus } from '../types/contract';
 
 /** 《03》§4.3：8 态 */
 export const CLIENT_STATES = [
@@ -438,6 +438,10 @@ export const SERVICE_NOT_READY = {
  *
  * **不得**与 `SERVICE_NOT_READY` 混用（《03》§2.3 边界 / 《01》§4.4 判据）；
  * 因此这里**没有**「启动 Box」按钮，只给「重试」+ 等待语义。
+ *
+ * ⚠️ 「首张稍慢，后续加快」**不属于**本态 —— 它是 `running` 期间第 1 张的提示
+ * （《01》§4.2 / 《04》§5.3），见 `SLOW_FIRST_IMAGE_HINT`。这里只有§4.1 规定的
+ * 「提示行 + 阶段副行」两句。
  */
 export const ENGINE_PREPARING = {
   phase: 'preparing',
@@ -448,9 +452,52 @@ export const ENGINE_PREPARING = {
   actionLabel: '重试',
   /** §4.1 交互：提示「准备完成后请重新提交」（不排队、不缓存） */
   secondary: '准备完成后请重新提交',
-  /** 《01》§4.2 / §4.3 文案（逐字，不得改写）：预期行为，不得做成错误 / 警告样式 */
-  slowFirst: '首张稍慢，后续加快',
 } as const;
+
+/**
+ * 「准备中」浮层的**副行**文案（《01》§4.1 逐字：「副行按阶段显示
+ * 『正在准备翻译模型』/『正在预热』」）。
+ *
+ * 阶段事实源 = `503 ENGINE_NOT_READY` 的 `details.sidecar.state`
+ * （box-service `assertSidecarReady`，取值 `starting` / `prewarming` / `downloading`）。
+ */
+export const PREPARING_SUBLINE = {
+  /** `starting` / `downloading` —— 环境 / 模型尚在准备（对应 box 端 L2） */
+  model: '正在准备翻译模型',
+  /** `prewarming` —— 模型已就位、正在预热（对应 box 端 L3） */
+  warmup: '正在预热',
+} as const;
+
+/**
+ * 阶段 → 副行。**取不到阶段就不猜**（返回 `null`，浮层不渲染副行）——
+ * 契约面只允许出现上述两句之一，编第三句等于撒谎。
+ */
+export function preparingSubline(state: EnginePreparingState | null): string | null {
+  if (state === 'prewarming') return PREPARING_SUBLINE.warmup;
+  if (state === 'starting' || state === 'downloading') return PREPARING_SUBLINE.model;
+  return null;
+}
+
+/**
+ * 「首张稍慢，后续加快」—— **`running` 且当前正在处理第 1 张**时显示，
+ * 第 2 张起消失（《01》§4.2「时机」行 / 《04》§5.3 / 《09》L4）。
+ *
+ * 它是**预期行为**，不是异常：不得做成错误 / 警告样式（《01》§4.2 末注）。
+ */
+export const SLOW_FIRST_IMAGE_HINT = '首张稍慢，后续加快';
+
+/**
+ * 上一条的显示判据。
+ *
+ * `current` 一律取服务端 `progress.current`（= 正在翻译的 item 序号，无则 0），
+ * 不在客户端推演当前张号（《03》§5.7 客户端禁令）。
+ */
+export function showsSlowFirstImageHint(input: {
+  state: ClientState;
+  current: number | null | undefined;
+}): boolean {
+  return input.state === 'running' && input.current === 1;
+}
 
 /** 两态的并集（`serviceOverlayFor` 的返回类型） */
 export type ServiceStateCopy = typeof SERVICE_NOT_READY | typeof ENGINE_PREPARING;

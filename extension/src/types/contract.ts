@@ -253,6 +253,33 @@ export const API_ERROR_CODES = [
 
 export type ApiErrorCode = (typeof API_ERROR_CODES)[number];
 
+/**
+ * 《03》§2.3 `ENGINE_NOT_READY` 响应体里 `details.sidecar.state` 的取值。
+ *
+ * 与 box-service `assertSidecarReady` 的抛错逐字对齐：
+ * `throw new ApiError('ENGINE_NOT_READY', msg, { sidecar: { state: sc.state, port: sc.port } })`，
+ * 其中这三个共同点是「**用户只需等待**，不需要做任何操作」。
+ */
+export const ENGINE_PREPARING_STATES = ['starting', 'prewarming', 'downloading'] as const;
+export type EnginePreparingState = (typeof ENGINE_PREPARING_STATES)[number];
+
+/**
+ * 从错误详情里取「准备中」阶段。
+ *
+ * **只认白名单内的值**：取不到 / 形状不对 / 未知取值一律返回 `null`，
+ * 由 UI 走通用兜底 —— 契约面不允许客户端**推测**一个阶段（《03》§5.7 客户端禁令精神：
+ * 屏幕上出现的阶段词必须有事实来源）。
+ */
+export function enginePreparingStateOf(details: Record<string, unknown>): EnginePreparingState | null {
+  const sidecar = details.sidecar;
+  if (typeof sidecar !== 'object' || sidecar === null) return null;
+  const state = (sidecar as { state?: unknown }).state;
+  if (typeof state !== 'string') return null;
+  return (ENGINE_PREPARING_STATES as readonly string[]).includes(state)
+    ? (state as EnginePreparingState)
+    : null;
+}
+
 /** 《03》§2.2 / §2.3 的 HTTP 状态映射（客户端据此判断是否需要重新配对 / 切换未就绪态） */
 export const API_ERROR_HTTP: Record<ApiErrorCode, number> = {
   BATCH_LIMIT_EXCEEDED: 400,
