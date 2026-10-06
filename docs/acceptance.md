@@ -44,3 +44,48 @@
 - 整页导航（MPA）场景的扩展重注入（夹具有按钮，验收脚本未走）
 - 取消确认、失败重试、令牌错误 401 的 UI 路径（单测已覆盖规则层）
 - 视觉走查（设计稿 18 令牌已由单测逐字核对，像素级视觉比对未做）
+
+---
+
+# 端到端验收报告 —— 插件端 ver2.0（S8 插件串联）
+
+日期：2026-10-06　执行：`npm test` / `npm run verify` / `e2e/noservice-probe.mjs` / `e2e/e9-real-engine.mjs`
+
+本迭代把「服务未就绪」扩为**未就绪 / 准备中**两态（《01》§4.1 / §4.4），
+解析《03》§2.3 的 `ENGINE_NOT_READY` / `MODEL_DOWNLOAD_FAILED`，
+并**删除** ver1.0 遗留的演示旁路（`DEMO_BYPASS_SERVICE_READY` / `demoMode.ts`）。
+
+## 结果
+
+| 项 | 结果 |
+|---|---|
+| 插件单测 `npm test` | **201/201**（新增 `tests/s8-engine-states.test.ts`，分母钉死） |
+| 端到端 `npm run verify`（mock） | **27/27** |
+| 「服务未就绪」路径 `e2e/noservice-probe.mjs` | **10/10**（真实 Chromium + 未打包扩展，**不启动** mock-service） |
+| 真机联调 `e2e/e9-real-engine.mjs` | **19/0** —— 真实漫画站（`jmanga.media` 112 全 18 页 + 113 前 13 页 = 31 张） + 真 box-service + **真引擎**；序号 001–031 连续、两批串行不交错、31 项全成功 |
+| `npm run types` / `npm run compile` | 0 错 / 0 错 |
+
+## 反证（都真跑变红后按 shasum 还原）
+
+| # | 破坏 | 应变红的断言 |
+|---|---|---|
+| 1 | 去掉 `showsSlowFirstImageHint` 的 `current === 1` | `P3-3` |
+| 2 | 打乱 `preparingSubline` 映射（`prewarming → model`） | `P2-8` |
+| 3 | 恢复 `DEMO_BYPASS_SERVICE_READY` 语义（浮层按 `ready` 渲染） | noservice 探针 **4 项 FAIL** |
+
+## S8 修正的两处口径（`0195952`）
+
+1. 「首张稍慢，后续加快」的落点是 **`running` 且正在处理第 1 张**（《01》§4.2 /《04》§5.3 /《09》L4 三处一致），
+   不是「准备中」浮层的副行；且它属**预期行为**，不得做成告警样式。
+2. 「准备中」副行按阶段显示（事实源 = `503` 的 `details.sidecar.state`）；取不到就**不渲染**，不猜第三句。
+   为此接通了 `details` 的跨层链路 —— 原先断在四处，导致 `BoxServiceError.details` 恒为 `{}`。
+
+## 未覆盖（诚实清单）
+
+- **懒加载站点「未滚动 = 抓不到图」**：真实漫画站上未进入视口的图是 1×1 透明占位 gif（真地址在 `data-src`），
+  实测同一页不滚动只有 4 张通过过滤规则、滚到底 18 张。要不要在抓图前主动预热页面属**行为变更**，待产品拍板。
+- **「同一任务追加批次」分支从 UI 不可达**：面板单次上限与批量上限同为 20（`decideSubmit` 超限即拦截），
+  所以 `splitIntoBatches` 的 append 分支在插件侧永远走不到（服务端侧由引擎验收 E3 在 HTTP 层覆盖）。
+- 「整页导航（MPA）」与 ver1.0 遗留项同前，未变。
+
+台账：`miao-dock/docs/spec-notes.md` 的 **D-77**（引擎侧逐项验收见同仓 `docs/engine-e2e-acceptance-report.md` §2.9）。
