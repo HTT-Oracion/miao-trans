@@ -22,7 +22,7 @@ import {
   cssVars,
 } from '../src/theme/tokens';
 import { splitIntoBatches } from '../src/naming';
-import { BATCH_LIMIT } from '../src/types/contract';
+import { BATCH_LIMIT, SELECT_LIMIT } from '../src/types/contract';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const css = readFileSync(resolve(here, '../src/panel/panel.css'), 'utf8');
@@ -88,6 +88,18 @@ describe('《01》§6.3 每页 20 张的几何成立性', () => {
 
   it('一页刚好一批：20 张不产生多余批次', () => {
     expect(splitIntoBatches(Array.from({ length: GRID.perPage }, (_, i) => i), BATCH_LIMIT)).toHaveLength(1);
+  });
+
+  /*
+   * 选择上限与单批上限**解耦**（《01》§5.1 拍板）。
+   *
+   * 上面那条 `perPage === BATCH_LIMIT`（一页刚好一批）是**几何事实**，抬选择上限不影响它；
+   * 这一条守的是另一件事：50 与 20 是两个数，且 50 **不是** 20 的整数倍 ——
+   * 末批只有 10 张。若有人把 SELECT_LIMIT 改成 20 或 40，这条会红。
+   */
+  it('选择上限 ≠ 单批上限：50 > 20，且 50 **不是** 20 的整数倍（末批不满）', () => {
+    expect(SELECT_LIMIT).toBeGreaterThan(BATCH_LIMIT);
+    expect(SELECT_LIMIT % BATCH_LIMIT).not.toBe(0);
   });
 });
 

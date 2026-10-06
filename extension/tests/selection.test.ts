@@ -4,7 +4,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { BATCH_LIMIT } from '../src/types/contract';
+import { BATCH_LIMIT, SELECT_LIMIT } from '../src/types/contract';
 import {
   LEAVE_DOM_CLEAR_THRESHOLD,
   canWriteBack,
@@ -29,60 +29,78 @@ import {
 } from '../src/domain/clientState';
 
 describe('《01》§5.2 计数三态', () => {
-  it('≤19：ink-2 色 + 「已选 6 张 · 分布于 1 页」', () => {
+  it('≤49：ink-2 色 + 「已选 6 张 · 分布于 1 页」', () => {
     const c = computeSelectionCounter(6, 1);
     expect(c.tone).toBe('normal');
     expect(c.token).toBe('ink-2');
     expect(c.text).toBe('已选 6 张 · 分布于 1 页');
   });
 
-  it('=20：yellow 色 + 「已选 20 张 · 已达单次上限」（此档不显示分布页数）', () => {
-    const c = computeSelectionCounter(20, 2);
+  it('=50：yellow 色 + 「已选 50 张 · 已达选择上限 · 分布于 3 页」', () => {
+    const c = computeSelectionCounter(50, 3);
     expect(c.tone).toBe('at-limit');
     expect(c.token).toBe('yellow');
-    expect(c.text).toBe('已选 20 张 · 已达单次上限');
+    expect(c.text).toBe('已选 50 张 · 已达选择上限 · 分布于 3 页');
   });
 
-  it('>20：error 色 + 「已选 31 张 · 超出上限 11 张」', () => {
-    const c = computeSelectionCounter(31, 2);
+  it('>50：error 色 + 「已选 51 张 · 超出上限 1 张 · 分布于 3 页」', () => {
+    const c = computeSelectionCounter(51, 3);
     expect(c.tone).toBe('over-limit');
     expect(c.token).toBe('error');
-    expect(c.text).toBe('已选 31 张 · 超出上限 11 张');
-    expect(c.overflow).toBe(11);
+    expect(c.text).toBe('已选 51 张 · 超出上限 1 张 · 分布于 3 页');
+    expect(c.overflow).toBe(1);
+  });
+
+  /*
+   * ⚠️ 选择上限 50 > 每页 20 格之后，「分布于 N 页」从锦上添花变成**必要信息** ——
+   * 用户得知道还得再翻几页。这一条钉住"三档都带页数"：退回只在 ≤19 档显示即变红。
+   */
+  it('**三档都必须带「分布于 N 页」**（选满 50 必然跨页）', () => {
+    for (const [n, pages] of [[6, 1], [50, 3], [51, 3]] as const) {
+      expect(computeSelectionCounter(n, pages).text).toContain(`分布于 ${pages} 页`);
+    }
   });
 
   it('**不使用 pink**：pink 是主强调色，用于超限会让「可点的」与「出错的」同色', () => {
-    for (const n of [0, 19, 20, 21, 31]) {
+    for (const n of [0, 49, 50, 51, 31]) {
       expect(computeSelectionCounter(n, 1).token).not.toBe('pink');
     }
   });
 
-  it('19 → 20 → 21 逐档换色（这是分层拦截的可观测形态）', () => {
-    expect(computeSelectionCounter(19, 1).token).toBe('ink-2');
-    expect(computeSelectionCounter(20, 1).token).toBe('yellow');
-    expect(computeSelectionCounter(21, 1).token).toBe('error');
+  it('49 → 50 → 51 逐档换色（这是分层拦截的可观测形态）', () => {
+    expect(computeSelectionCounter(49, 1).token).toBe('ink-2');
+    expect(computeSelectionCounter(50, 1).token).toBe('yellow');
+    expect(computeSelectionCounter(51, 1).token).toBe('error');
   });
 });
 
 describe('《01》§5.1 分层拦截', () => {
-  it('选择阶段是软的：第 21 张**仍然允许勾选**', async () => {
+  it('选择阶段是软的：第 51 张**仍然允许勾选**', async () => {
     const { canSelectMore } = await import('../src/selection/rules');
     expect(canSelectMore()).toBe(true);
   });
 
-  it('提交阶段是硬的：21 张被拦截，且给出两个动作、不发网络请求', () => {
-    const d = decideSubmit({ selectedCount: 21, comicNameOk: true });
+  it('提交阶段是硬的：51 张被拦截，且只给一个动作、不发网络请求', () => {
+    const d = decideSubmit({ selectedCount: 51, comicNameOk: true });
     expect(d.kind).toBe('block');
     if (d.kind === 'block') {
       expect(d.reason).toBe('over-limit');
-      expect(d.message).toBe('已超出单次上限 1 张');
-      expect(d.actions.map((a) => a.id)).toEqual(['trim', 'batch']);
+      expect(d.message).toBe('已超出选择上限 1 张');
+      // 'batch'（分批提交）已按《01》§5.1 拍板从用户可选项里删掉 —— 切批是内部行为
+      expect(d.actions.map((a) => a.id)).toEqual(['trim']);
     }
   });
 
-  it('恰好 20 张放行 —— 「上限 20 与每页 20 一致」是设计论证的支点', () => {
-    const d = decideSubmit({ selectedCount: BATCH_LIMIT, comicNameOk: true });
-    expect(d.kind).toBe('allow');
+  it('恰好 50 张放行（选择上限）；**并且 20 张也必须放行**（单批上限不是选择上限）', () => {
+    expect(decideSubmit({ selectedCount: SELECT_LIMIT, comicNameOk: true }).kind).toBe('allow');
+    expect(decideSubmit({ selectedCount: BATCH_LIMIT, comicNameOk: true }).kind).toBe('allow');
+  });
+
+  it('20–50 这一段是**正常区间**：直接提交，既不拦也不出现「分批」字样', () => {
+    for (const n of [20, 21, 40, 50]) {
+      const d = decideSubmit({ selectedCount: n, comicNameOk: true });
+      expect(d.kind, `${n} 张应当放行`).toBe('allow');
+    }
   });
 
   it('未选任何图 → 阻断', () => {

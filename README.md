@@ -82,11 +82,11 @@ a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90
 
 | 项 | 结果 |
 |---|---|
-| 插件单测 | **201/201**（新增 `tests/s8-engine-states.test.ts`：两态分流 + 文案逐字 + `details` 链路，分母钉死） |
+| 插件单测 | **205/205**（新增 `tests/s8-engine-states.test.ts`：两态分流 + 文案逐字 + `details` 链路，分母钉死；2026-10-07 选择上限 50 的 4 条新断言已计入） |
 | 端到端验收（mock） | **27/27**（真实 Chromium + 未打包扩展，含像素级回写证明） |
-| 「服务未就绪」路径 | `e2e/noservice-probe.mjs` **10/10**（不启动 mock-service） |
+| 「服务未就绪」路径 | `extension/e2e/noservice-probe.mjs` **10/10**（不启动 mock-service） |
 | 真机联调 E9（真引擎） | **19/0**（真实漫画站 31 张；序号 001–031 连续、串行不交错、31 项全成功） |
 | `tsc --noEmit` / `wxt build` | 干净 / 通过 |
-| 反证 | S8 三条 + noservice 探针 4 项 FAIL，各真跑变红后按 shasum 还原 |
+| 反证 | S8 三条 + noservice 探针 4 项 FAIL + 选择上限 2 条（`SELECT_LIMIT`→20 变红 6 条、→40 变红 1 条）+ P4-5 收窄 3 条（路径指向不存在目录 / 挂到旁路叙事 / 全文改名），各真跑变红后按 shasum 还原 |
 
 台账：`miao-dock/docs/spec-notes.md` 的 **D-77**；引擎侧逐项验收见 `miao-dock/docs/engine-e2e-acceptance-report.md` §2.9。

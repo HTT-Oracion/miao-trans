@@ -136,7 +136,7 @@ describe('《03》§5.2 multipart 构造', () => {
     expect(await (fd.get('imageOrder[]') as Blob).text()).toBe('7,8');
   });
 
-  it('超过 20 张在客户端就被挡下（纵深防御，与面板内拦截同源）', async () => {
+  it('超过 20 张在客户端就被挡下（**单批**纵深防御；面板内的拦截在 50，见 selection.test.ts）', async () => {
     const many = Array.from({ length: 21 }, (_, i) => ({
       seq: i + 1,
       blob: new Blob(['x'], { type: 'image/png' }),

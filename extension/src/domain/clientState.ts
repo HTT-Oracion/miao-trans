@@ -374,7 +374,7 @@ export function cancelConfirmCopy(state: ClientState, doneCount: number): {
 
 /** 错误码 → 面板内文案（《03》§2.2 / §2.3「客户端处理」列） */
 export const ERROR_COPY: Record<ApiErrorCode, string> = {
-  BATCH_LIMIT_EXCEEDED: '单次最多提交 20 张',
+  BATCH_LIMIT_EXCEEDED: '单批上限 20 张',
   COMIC_NAME_REQUIRED: '请填写漫画名',
   INVALID_COMIC_NAME: '漫画名含非法字符或为系统保留名',
   INVALID_IMAGE: '有图片无法解码，请刷新页面后重试',

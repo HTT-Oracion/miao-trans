@@ -494,14 +494,14 @@ export function Panel({
           <div className="mt-overlay__card">
             <h4>{decision.message}</h4>
             <p className="mt-overlay__hint">
-              单次提交上限 20 张。可以分批提交 —— 两批会排进同一个任务，序号连续。
+              最多可选 50 张。提交后服务端按每批 20 张自动排队、序号连续 —— 不需要你分批。
             </p>
             <div className="mt-overlay__actions mt-overlay__actions--stack">
               {decision.actions.map((a) => (
                 <button
                   key={a.id}
                   type="button"
-                  className={a.id === 'batch' ? 'mt-primarybtn' : 'mt-ghostbtn'}
+                  className="mt-ghostbtn"
                   onClick={() => void ctl.onOverLimitAction(a.id)}
                 >
                   {a.label}

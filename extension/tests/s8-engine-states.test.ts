@@ -383,10 +383,28 @@ describe('S8 P-4 删除 DEMO_BYPASS_SERVICE_READY', () => {
     expect(retry).not.toMatch(/ready:\s*true/);
   });
 
-  caseIt('P4-5', 'README 不再自述演示开关', () => {
+  caseIt('P4-5', 'README 不自述「演示 / 旁路」叙事；测试入口可以写，但必须指向真实存在的文件', () => {
+    // ① 真正的护栏（自 a1d8aa5 立下，一字未改）：不得宣传"可以绕过真服务、假装就绪"。
     expect(readme).not.toMatch(/DEMO_BYPASS_SERVICE_READY/);
     expect(readme).not.toMatch(/演示模式/);
-    expect(readme).not.toMatch(/noservice-probe/);
+
+    // ② 收窄（2026-10-07）：原第三条是 `expect(readme).not.toMatch(/noservice-probe/)`，
+    //    那是随"演示模式"叙事一并立下的 —— 当时这条命令被当作旁路的一部分。
+    //    它现在是**合法测试入口**（专门验证「服务未就绪」路径，10/10），
+    //    禁掉字面等于禁掉一条真实验收 ⇒ 判据已随实现演进而失配。
+    //    收窄为两条**正向**判据 —— 比"删掉这一行"更强（删掉就等于这条什么也不测）：
+    //      a) README 必须保留这条入口的说明（否则下面的循环会空转 ⇒ 静默通过）；
+    //      b) 文档里写的入口必须**真的存在**（防"文档写了、文件没了 / 路径抄错"）；
+    //      c) 不得把该入口挂到旁路 / 假装就绪的叙事上。
+    const probeLines = readme.split('\n').filter((l) => l.includes('noservice-probe'));
+    expect(probeLines.length, 'README 必须保留 noservice-probe 这条验收入口的说明').toBeGreaterThan(0);
+    for (const line of probeLines) {
+      expect(line).not.toMatch(/旁路|绕过|跳过真服务|假装|bypass|fake/i);
+      for (const rel of line.match(/[\w./-]*noservice-probe\.mjs/g) ?? []) {
+        const p = rel.replace(/^extension\//, ''); // README 的根相对写法 → extension 相对
+        expect(exists(p), `${rel} 被 README 引用，必须真实存在`).toBe(true);
+      }
+    }
   });
 
   caseIt('P4-6', 'P0-3 任务恢复与令牌配对引导**必须保留**（删除旁路时不得顺手删掉）', () => {

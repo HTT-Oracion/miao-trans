@@ -12,7 +12,7 @@ import type { Dispatch, UnknownAction } from '@reduxjs/toolkit';
 import { browser } from 'wxt/browser';
 
 import type { ItemDto, QueueDto, SseEnvelope, TaskCreatedDto, TaskDto } from '../types/contract';
-import { BoxServiceError, SSE_STALE_MS, SSE_WATCHDOG_TICK_MS, enginePreparingStateOf } from '../types/contract';
+import { BATCH_LIMIT, BoxServiceError, SELECT_LIMIT, SSE_STALE_MS, SSE_WATCHDOG_TICK_MS, enginePreparingStateOf } from '../types/contract';
 import type { BgPush, BgRequest, BgResponse } from '../types/messages';
 import { isActive, type ClientState, ERROR_COPY } from '../domain/clientState';
 import { collectOrderedImages, type PageImage } from '../collectImages';
@@ -514,8 +514,9 @@ export function usePanelController(
         const usable = withSeq.filter((x) => fetched.ready.includes(x.seq));
         if (usable.length === 0) throw BoxServiceError.network('没有可提交的图片');
 
-        // ④ 分批切分：前 20 → POST /tasks；其余 → 追加到**同一任务**
-        const batches = splitIntoBatches(usable, 20);
+        // ④ 分批切分：前 BATCH_LIMIT 张 → POST /tasks；其余 → 追加到**同一任务**
+        //    批大小用 BATCH_LIMIT（20，契约值），**不是** SELECT_LIMIT（50，选择上限）
+        const batches = splitIntoBatches(usable, BATCH_LIMIT);
         const first = batches[0]!;
         const created = await sendBg<TaskCreatedDto>({
           type: 'TASK_SUBMIT',
@@ -581,18 +582,19 @@ export function usePanelController(
   );
 
   const onOverLimitAction = useCallback(
+    /*
+     * 只剩一个动作（'trim'）：`'batch'` 已按《01》§5.1 拍板从用户可选项里删掉 ——
+     * 20–50 是正常区间、切批是内部行为，不该做成用户的选择题。
+     * 保留 `id` 参数是为了将来再加动作时不必改接线。
+     */
     async (id: OverLimitActionId) => {
       setOverLimitOpen(false);
-      const keys = selectedKeysRef.current;
-      if (id === 'trim') {
-        dispatch(selectionActions.keptFirst(20));
-        setRevision((r) => r + 1);
-        setNotice('已保留阅读顺序最靠前的 20 张');
-        return;
-      }
-      await doSubmit(keys, ctx.current.comicName);
+      if (id !== 'trim') return;
+      dispatch(selectionActions.keptFirst(SELECT_LIMIT));
+      setRevision((r) => r + 1);
+      setNotice(`已保留阅读顺序最靠前的 ${SELECT_LIMIT} 张`);
     },
-    [dispatch, doSubmit],
+    [dispatch],
   );
 
   // ── 取消 ──

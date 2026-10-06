@@ -6,7 +6,7 @@
  * 不依赖浏览器环境。
  */
 
-import { BATCH_LIMIT, type ItemDto } from '../types/contract';
+import { SELECT_LIMIT, type ItemDto } from '../types/contract';
 import type { TokenName } from '../theme/tokens';
 
 // ─────────────────────── 《01》§5.2 计数三态 ───────────────────────
@@ -27,11 +27,14 @@ export interface SelectionCounter {
 /**
  * 计数三态（《01》§5.2）：
  *
- * | 已选 | 色彩        | 文案                        |
- * |------|-------------|-----------------------------|
- * | ≤19  | ink-2       | 已选 6 张 · 分布于 1 页     |
- * | =20  | yellow      | 已选 20 张 · 已达单次上限   |
- * | >20  | error       | 已选 31 张 · 超出上限 11 张 |
+ * | 已选 | 色彩   | 文案                                     |
+ * |------|--------|------------------------------------------|
+ * | ≤49  | ink-2  | 已选 6 张 · 分布于 1 页                   |
+ * | =50  | yellow | 已选 50 张 · 已达选择上限 · 分布于 3 页    |
+ * | >50  | error  | 已选 51 张 · 超出上限 1 张 · 分布于 3 页   |
+ *
+ * ⚠️ **三档都带「分布于 N 页」**：选择上限 50 > 每页 20 格之后，选满必然跨页，
+ * "还要翻几页"从锦上添花变成了必要信息（它原先只在 ≤19 档显示）。
  *
  * **为什么超限不用 pink**：pink 是本稿主强调色，用于主按钮与选中态。用它表达超限
  * 会让「可点的东西」与「出错的东西」同色，破坏语义分层。
@@ -39,7 +42,7 @@ export interface SelectionCounter {
 export function computeSelectionCounter(
   count: number,
   pageCount: number,
-  limit: number = BATCH_LIMIT,
+  limit: number = SELECT_LIMIT,
 ): SelectionCounter {
   if (count > limit) {
     return {
@@ -47,7 +50,7 @@ export function computeSelectionCounter(
       pageCount,
       tone: 'over-limit',
       token: 'error',
-      text: `已选 ${count} 张 · 超出上限 ${count - limit} 张`,
+      text: `已选 ${count} 张 · 超出上限 ${count - limit} 张 · 分布于 ${pageCount} 页`,
       overflow: count - limit,
     };
   }
@@ -57,7 +60,7 @@ export function computeSelectionCounter(
       pageCount,
       tone: 'at-limit',
       token: 'yellow',
-      text: `已选 ${count} 张 · 已达单次上限`,
+      text: `已选 ${count} 张 · 已达选择上限 · 分布于 ${pageCount} 页`,
       overflow: 0,
     };
   }
@@ -73,11 +76,14 @@ export function computeSelectionCounter(
 
 // ─────────────────────── 《01》§5.1 分层拦截 ───────────────────────
 
-/** 「确定」被拦截时给出的两个动作 —— 顺序即界面顺序 */
-export const OVER_LIMIT_ACTIONS = [
-  { id: 'trim', label: '取消勾选（回到 20 张内）' },
-  { id: 'batch', label: '分批提交' },
-] as const;
+/**
+ * 「确定」被拦截时给出的动作 —— 顺序即界面顺序。
+ *
+ * 《01》§5.1 拍板：选择上限抬到 50 之后，20–50 是**正常区间**，"分批"成了纯内部行为。
+ * 因此**只剩一个动作**：`'batch'`（分批提交）已从用户可选项里删掉 ——
+ * 切批不是用户的决定，教他"可以分批提交"反而让他以为得自己动手。
+ */
+export const OVER_LIMIT_ACTIONS = [{ id: 'trim', label: '取消勾选（回到 50 张内）' }] as const;
 
 export type OverLimitActionId = (typeof OVER_LIMIT_ACTIONS)[number]['id'];
 
@@ -88,7 +94,7 @@ export type SubmitDecision =
 /**
  * 提交决策（《01》§5.1 分层拦截的「提交阶段硬拦」+《03》§2.2）。
  *
- * 关键：超限时**拦截并给出两个动作**，且**不发网络请求**。服务端的
+ * 关键：超限（> **选择上限**）时**拦截并给出动作**，且**不发网络请求**。服务端的
  * `BATCH_LIMIT_EXCEEDED` 保留作为跨客户端一致性保障，在面板内正常路径不可达。
  */
 export function decideSubmit(input: {
@@ -96,7 +102,7 @@ export function decideSubmit(input: {
   comicNameOk: boolean;
   limit?: number;
 }): SubmitDecision {
-  const limit = input.limit ?? BATCH_LIMIT;
+  const limit = input.limit ?? SELECT_LIMIT;
   if (input.selectedCount === 0) {
     return { kind: 'block', reason: 'empty', message: '请先选择要翻译的图片', actions: [] };
   }
@@ -104,7 +110,7 @@ export function decideSubmit(input: {
     return {
       kind: 'block',
       reason: 'over-limit',
-      message: `已超出单次上限 ${input.selectedCount - limit} 张`,
+      message: `已超出选择上限 ${input.selectedCount - limit} 张`,
       actions: OVER_LIMIT_ACTIONS,
     };
   }
@@ -115,19 +121,19 @@ export function decideSubmit(input: {
 }
 
 /**
- * 勾选第 21 张起**仍然允许**（不阻断），只是计数转 error + 内联提示。
+ * 勾选第 51 张起**仍然允许**（不阻断），只是计数转 error + 内联提示。
  *
- * 这是「分层拦截」全部分量的来源：《01》§5.3 注 ——「分批提交」这个功能的入口
- * **只在允许超选时才存在**。若改成硬拦截，必须同时满足 §5.4 的三条回落条件。
+ * 这是「分层拦截」全部分量的来源 —— 选择阶段是软的、提交阶段才是硬的。
+ * 若改成硬拦截，必须同时满足 §5.4 的三条回落条件。
  */
 export function canSelectMore(): boolean {
   return true;
 }
 
-/** 内联提示：仅超限时出现（《01》§5.1「勾选第 21 张起」行） */
-export function inlineOverLimitHint(count: number, limit: number = BATCH_LIMIT): string | null {
+/** 内联提示：仅超限时出现（《01》§5.1「勾选第 51 张起」行） */
+export function inlineOverLimitHint(count: number, limit: number = SELECT_LIMIT): string | null {
   if (count <= limit) return null;
-  return `已超出单次上限 ${count - limit} 张`;
+  return `已超出选择上限 ${count - limit} 张`;
 }
 
 // ─────────────────────── 《01》§6.4 三条 P0 硬规则 ───────────────────────
@@ -221,7 +227,7 @@ export function countLeftDom(
  * P0-2 在「翻译中切页」时的口径（本轮裁定，方案 1）：
  * **不停当前任务，只清空尚未提交的已选集。**
  *
- * 理由：已提交的任务由服务端持有、与页面无关；强行取消会让用户刚提交的 20 张白跑。
+ * 理由：已提交的任务由服务端持有、与页面无关；强行取消会让用户刚提交的 50 张白跑。
  */
 export function onRouteChangePlan(input: {
   hasRunningTask: boolean;

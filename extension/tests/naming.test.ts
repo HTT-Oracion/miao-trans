@@ -273,6 +273,19 @@ describe('《01》§5.3 分批切分', () => {
   it('400 张 → 恰好 20 批（跨批次总量不设上限，仅受 999 约束）', () => {
     expect(splitIntoBatches(Array.from({ length: 400 }, (_, i) => i), 20)).toHaveLength(20);
   });
+
+  /*
+   * 选择上限抬到 50 之后的第一种真实形态：50 = 20 + 20 + **10**。
+   * 末批不满不是笔误，是要求的一部分 —— 服务端与切批都必须吃得下。
+   */
+  it('50 张 → 3 批（20 / 20 / 10），且跨批序号连续', () => {
+    const items = Array.from({ length: 50 }, (_, i) => i + 1);
+    const batches = splitIntoBatches(items, 20);
+    expect(batches.map((b) => b.length)).toEqual([20, 20, 10]);
+    // 《03》§3 关键性质 2：后一批的 seqFrom 恒等于前一批的 seqTo + 1
+    expect(batches[1]![0]).toBe(batches[0]![batches[0]!.length - 1]! + 1);
+    expect(batches[2]![0]).toBe(batches[1]![batches[1]!.length - 1]! + 1);
+  });
 });
 
 describe('回执副行的字节格式化（事实展示，非估算）', () => {
