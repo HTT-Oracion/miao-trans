@@ -65,3 +65,16 @@
   C. 全文 `noservice-probe` → `ns-probe` ⇒ 红（判据① 空转护栏）。
 - **结果**：插件单测 **205/205**（原 204/205）。**用例条数不变** —— 只改 P4-5 的断言体，`EXPECTED_CASE_COUNT` 仍 **27**。
 - 修改文件：`extension/tests/s8-engine-states.test.ts`（P4-5 断言体 + 注释）· `README.md`（路径统一 + 反证行补记）· 本文件。
+
+## D-09 新增仓库级通用入口 `AGENTS.md`（跨工具可读，2026-10-07）
+
+- **背景**：本仓此前只有 `README.md` 作说明，**没有任何"AI 工具进入本仓时会被自动读取的入口"**；
+  而姊妹仓 `miao-dock` 已有 `AGENTS.md` + `.trae/rules`。两仓规范入口不对称 ⇒ 新会话 / 新接手者进本仓时缺硬约束入口。
+- **裁定**：新增仓库根 `AGENTS.md` 作为**唯一入口**；并**刻意不新增** `CODEBUDDY.md` ——
+  在 WorkBuddy / CodeBuddy Code 里，项目主指引按 `CODEBUDDY.md` → `CODEBUDDY.mdc` → `AGENTS.md` → `AGENTS.mdc`
+  取**首个命中**，多建 `CODEBUDDY.md` 会让同目录 `AGENTS.md` **不再被加载**（遮蔽）。只维护 `AGENTS.md` 反而能被原生读取。
+- **覆盖面（已核实）**：WorkBuddy / CodeBuddy Code 原生读取；Trae / Cursor / Codex 亦按 `AGENTS.md` 约定读取；
+  **Claude Code 不读 `AGENTS.md`**（需 `CLAUDE.md` 导入）。本仓暂无 `CLAUDE.md` / `.github/copilot-instructions.md`（按需再补）。
+- **体量约束**：单份指引 > **40000 字符会被整份丢弃**（非截断）；桌面端首轮注入还在 **8000 字符**处截断。
+  ⇒ 本文件控制在 **5336 字符**，细节一律指向事实源（README / acceptance.md / 本台账）。
+- **验证**：新增文件后 `npm test` 仍 **205/205**（P4-5 只读根 `README.md`，`assets-integrity` 只扫资源目录，均不受影响）。
