@@ -23,8 +23,13 @@ mock-service/state/
 .idea/
 coverage/
 
-# e2e 运行产物
+# e2e 运行产物（历史遗留：早期 e2e 会把截图直接写在 e2e/ 下）
 e2e/*.png
 
-# e2e 运行产物
-e2e/*.png
+# 真机联调的运行目录 —— **所有测试产物都落这里，不要散进 e2e/**
+#   .temp-translate-test/{Box 漫画,state,profile,logs,recon}
+#   · 落盘的漫画原文 / 译文（几十 MB 级）
+#   · box-service 的 state（跨轮持久化）
+#   · Playwright 的浏览器 profile
+# 由 e2e/e9-real-engine.mjs 使用；脚本会在启动时重建本目录。
+.temp-translate-test/

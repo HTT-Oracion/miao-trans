@@ -41,6 +41,13 @@ function check(name, ok, detail = '') {
 let failures = 0;
 
 // ── 进程管理 ────────────────────────────────────────────────
+// 证据截图统一落 `.temp-translate-test/verify/`（已 gitignore）—— 与 E9 的产物口径一致，
+// 不再散进 /tmp（用户明确要求：测试产物集中一处，好找、也好清）。
+const ARTIFACTS = path.join(REPO, '.temp-translate-test', 'verify');
+fs.mkdirSync(ARTIFACTS, { recursive: true });
+const SHOT_FINAL = path.join(ARTIFACTS, 'final.png');
+const SHOT_FAIL = path.join(ARTIFACTS, 'fail.png');
+
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'miao-verify-'));
 const mockRoot = path.join(tmp, 'Box 漫画');
 const procs = [];
@@ -355,14 +362,15 @@ try {
   const counter5 = await page.locator('[data-testid="selection-counter"]').innerText().catch(() => '(计数器已隐藏)');
   check('J1 SPA 换页后已选清空（= 0）', /0/.test(counter5), `text="${counter5.trim()}"`);
 
-  await page.screenshot({ path: '/tmp/miao-verify-final.png' });
-  check('J1 最终截图已存 /tmp/miao-verify-final.png', true);
+  await page.screenshot({ path: SHOT_FINAL });
+  check(`J1 最终截图已存 ${path.relative(REPO, SHOT_FINAL)}`, fs.existsSync(SHOT_FINAL) && fs.statSync(SHOT_FINAL).size > 0,
+    `${fs.existsSync(SHOT_FINAL) ? fs.statSync(SHOT_FINAL).size : 0} B`);
 } catch (err) {
   check('执行过程', false, String(err).slice(0, 300));
   // 失败诊断：面板状态 + 控制台 + 截图
   try {
     if (page) {
-      await page.screenshot({ path: '/tmp/miao-verify-fail.png' });
+      await page.screenshot({ path: SHOT_FAIL });
       const dump = await page.evaluate(() => {
         const q = (sel) => document.querySelector(sel)?.textContent?.trim() ?? '(无)';
         return {
@@ -378,7 +386,7 @@ try {
   } catch { /* 诊断失败不影响主流程 */ }
   console.log('---- 页面控制台（最近 25 条）----');
   for (const l of consoleLog.slice(-25)) console.log('  ' + l);
-  console.log('失败截图：/tmp/miao-verify-fail.png');
+  console.log(`失败截图：${path.relative(REPO, SHOT_FAIL)}`);
 } finally {
   try { if (ctx) await ctx.close(); } catch { /* already closed */ }
   cleanup();
