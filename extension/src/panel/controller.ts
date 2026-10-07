@@ -24,7 +24,7 @@ import { toQueuePatch } from '../store/translation/queue';
 import { GRID } from '../theme/tokens';
 import { checkComicName, sortByReadingOrder, splitIntoBatches } from '../naming';
 import { decideSubmit, shouldClearSelection, countLeftDom, type OverLimitActionId } from '../selection/rules';
-import { locateImage, writeBackImage } from '../content/writeback';
+import { locateImage, resolveLocateTarget, writeBackImage } from '../content/writeback';
 import { installRouteWatcher } from '../content/routeWatcher';
 import { uuidV4 } from '../adapters/boxServiceClient';
 
@@ -66,6 +66,8 @@ export interface PanelViewState {
   /** 全选/刷新等动作的最近一次提示 */
   notice: string | null;
   setNotice: (v: string | null) => void;
+  /** 导出中 —— 打包与下载期间锁按钮，避免连点出多个下载 */
+  exporting: boolean;
 }
 
 export interface PanelController extends PanelViewState {
@@ -87,6 +89,24 @@ export interface PanelController extends PanelViewState {
   onSaveToken: () => Promise<void>;
   onRetryService: () => Promise<void>;
   onLocate: (key: string) => void;
+  onExport: () => Promise<void>;
+}
+
+/**
+ * `TASK_EXPORT_ZIP` 的应答。
+ *
+ * `missingTranslated` 与 `failed` 必须**分开**上报：前者是「译文还没产出」（正常态，
+ * 导出继续），后者是「连原图都没取到」（真失败）。合并成一个数字会让用户
+ * 分不清「还有几张没翻完」和「有几张丢了」。
+ */
+export interface ExportZipResult {
+  /** 实际打进包里的文件数 */
+  files: number;
+  /** 原图在、译文尚未产出的 seq */
+  missingTranslated: number[];
+  /** 原图都没取到的 seq */
+  failed: number[];
+  bytes: number;
 }
 
 /**
@@ -118,6 +138,7 @@ export function usePanelController(
   const [tokenInput, setTokenInput] = useState('');
   const [tokenDialogOpen, setTokenDialogOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
 
@@ -613,6 +634,47 @@ export function usePanelController(
   }, [dispatch]);
 
   // ── 打开目录 / 重试失败项 / 继续翻一批 ──
+  /**
+   * 导出 zip —— 「原图 + 译文（如有）」打包下载。
+   *
+   * 范围取 `ctx.current.plan` 的键，而不是 `writtenBackSeqs`：后者只统计**已回写
+   * 到页面**的张数，取消或「原图已离开页面」的任务会把它清空，但服务端**已经落盘**
+   * 的字节照样存在 —— 那种情况下导出仍应可用。
+   *
+   * 漫画名走 `comicNameRef`（Redux 同源，避免重蹈「按钮可点、动作读空」的覆辙）。
+   */
+  const onExport = useCallback(async () => {
+    const comicName = comicNameRef.current;
+    if (!comicName) {
+      setNotice('缺少漫画名，无法导出');
+      return;
+    }
+    const seqs = [...ctx.current.plan.keys()].sort((a, b) => a - b);
+    if (seqs.length === 0) {
+      setNotice('还没有已提交的图片，无法导出');
+      return;
+    }
+
+    setExporting(true);
+    setNotice(`正在导出 ${seqs.length} 张…`);
+    try {
+      const r = await sendBg<ExportZipResult>({
+        type: 'TASK_EXPORT_ZIP',
+        comicName,
+        seqs,
+        fileName: `${comicName}.zip`,
+      });
+      const parts = [`已导出 ${r.files} 个文件`];
+      if (r.missingTranslated.length > 0) parts.push(`${r.missingTranslated.length} 张尚无译文`);
+      if (r.failed.length > 0) parts.push(`${r.failed.length} 张取原图失败`);
+      setNotice(`${parts.join(' · ')}（${(r.bytes / 1024 / 1024).toFixed(1)} MB）`);
+    } catch (err) {
+      setNotice(`导出失败：${(err as BoxServiceError).message}`);
+    } finally {
+      setExporting(false);
+    }
+  }, []);
+
   const onRevealDir = useCallback(async () => {
     const comicName = ctx.current.comicName;
     if (!comicName) return;
@@ -680,14 +742,20 @@ export function usePanelController(
   }, [dispatch]);
 
   // ── 定位图片 ──
+  //
+  // 为什么成功也要给 notice：高亮是画在**站点 DOM** 上的内联样式，站点 CSS 或
+  // 懒加载容器都可能让它看不见。此前失败时按钮直接 disabled，点了毫无反馈 ——
+  // 用户只能判定「功能没做」。现在两条路都出提示，至少能区分「没找到」和「已定位」。
   const onLocate = useCallback((key: string) => {
-    const el = registry.elementOf(key);
-    if (!el || !el.isConnected) {
+    const img = registry.get(key);
+    const target = resolveLocateTarget(registry.elementOf(key), img?.expectedUrl);
+    if (!target) {
       // 判据同 P0-1 的 img.isConnected（《01》§6.3）
       setNotice('原图已离开当前页面');
       return;
     }
-    locateImage(el);
+    locateImage(target);
+    setNotice('已定位到该图（页面已滚动并高亮 1.2 秒）');
   }, []);
 
   return {
@@ -708,6 +776,7 @@ export function usePanelController(
     busy,
     notice,
     setNotice,
+    exporting,
     allImages,
     pageImages,
     totalPages,
@@ -724,5 +793,6 @@ export function usePanelController(
     onSaveToken,
     onRetryService,
     onLocate,
+    onExport,
   };
 }

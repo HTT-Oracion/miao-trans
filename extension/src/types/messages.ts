@@ -49,7 +49,15 @@ export type BgRequest =
   | { type: 'LIBRARY_REVEAL'; comicName: string }
   /** 刷新后恢复进行中任务（P0-3） */
   | { type: 'ACTIVE_TASK_GET' }
-  | { type: 'ACTIVE_TASK_CLEAR' };
+  | { type: 'ACTIVE_TASK_CLEAR' }
+  /**
+   * 导出为 zip：按 seq 批量取「原图 + 译文（若有）」字节，在 background 里打包后下载。
+   *
+   * 为什么**必须**在 background 做：字节要带 `X-Box-Token`、要跨源，且 service worker
+   * 里才有稳定的 baseUrl/token；而 Blob 不能跨消息传回面板（见本文件开头裁定），
+   * 所以「取字节 → 打包 → 触发下载」三步都得收在 background 内。
+   */
+  | { type: 'TASK_EXPORT_ZIP'; comicName: string; seqs: number[]; fileName: string };
 
 /**
  * background → 面板的应答。

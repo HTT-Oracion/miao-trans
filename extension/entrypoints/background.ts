@@ -27,6 +27,8 @@ import {
   type BgPush,
 } from '../src/types/messages';
 import { type UploadImage } from '../src/types/contract';
+import { buildZipBlob, type ZipEntry } from '../src/zip/storeZip';
+import { originalFileName, translatedFileName } from '../src/naming';
 
 // ─────────────────────────── 运行态（SW 可被回收，持久项一律落 storage） ───────────────────────────
 
@@ -129,6 +131,19 @@ export async function blobToDataUrl(blob: Blob): Promise<string> {
   const b64 = btoa(binary);
   const type = blob.type || 'image/png';
   return `data:${type};base64,${b64}`;
+}
+
+/**
+ * MIME → 落盘扩展名（与《03》§7.2 的 `png|jpg|jpeg|webp` 对齐）。
+ *
+ * 服务端以字节嗅探为准，这里的 Content-Type 只用于**拼文件名**；
+ * 认不出来一律回落 `png`，与服务端落盘缺省一致。
+ */
+function extOf(mime: string): string {
+  const m = (mime || '').toLowerCase();
+  if (m.includes('jpeg') || m.includes('jpg')) return 'jpg';
+  if (m.includes('webp')) return 'webp';
+  return 'png';
 }
 
 // ─────────────────────────── 消息处理 ───────────────────────────
@@ -322,6 +337,67 @@ async function handle(req: BgRequest, tabId: number): Promise<BgResponse> {
     case 'ACTIVE_TASK_CLEAR':
       await browser.storage.local.remove(STORAGE_KEYS.activeTask);
       return ok({ cleared: true });
+
+    /**
+     * 导出 zip —— 「取字节 → 打包 → 下载」三步全部收在 background 内。
+     *
+     * 两个刻意的设计：
+     *   1. **串行取字节**：并发会同时持有多张原图 + 译文的完整内存（单张可达数 MB），
+     *      service worker 内存配额有限，OOM 会让整个 SW 被回收。
+     *   2. **译文缺失不算失败**：只有部分页翻译成功是常态（取消 / 部分失败），
+     *      此时仍应导出已成功的部分，把缺失的 seq 回报给面板去提示。
+     */
+    case 'TASK_EXPORT_ZIP': {
+      const c = client();
+      const entries: ZipEntry[] = [];
+      const missingTranslated: number[] = [];
+      const failed: number[] = [];
+
+      for (const seq of req.seqs) {
+        // 原图：取不到就整张跳过，并记进 failed
+        try {
+          const original = await c.fetchLibraryFile(req.comicName, seq, 'original');
+          entries.push({
+            name: `${req.comicName}/${originalFileName(seq, extOf(original.type))}`,
+            data: new Uint8Array(await original.arrayBuffer()),
+          });
+        } catch {
+          failed.push(seq);
+          continue;
+        }
+
+        // 译文：可能尚未产出，缺失是正常的，只回报不中断
+        try {
+          const translated = await c.fetchLibraryFile(req.comicName, seq, 'translated');
+          entries.push({
+            name: `${req.comicName}/${translatedFileName(seq, extOf(translated.type))}`,
+            data: new Uint8Array(await translated.arrayBuffer()),
+          });
+        } catch {
+          missingTranslated.push(seq);
+        }
+      }
+
+      if (entries.length === 0) {
+        throw new BoxServiceError('INTERNAL', '没有可导出的图片（服务端未找到已落盘的字节）', 0);
+      }
+
+      const blob = buildZipBlob(entries);
+      const url = URL.createObjectURL(blob);
+      try {
+        await browser.downloads.download({ url, filename: req.fileName, saveAs: false });
+      } finally {
+        // 下载是异步的，给足时间再释放；过早 revoke 会拿到 0 字节文件
+        setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      }
+
+      return ok({
+        files: entries.length,
+        missingTranslated,
+        failed,
+        bytes: blob.size,
+      });
+    }
 
     default: {
       const never: never = req;

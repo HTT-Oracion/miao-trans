@@ -42,6 +42,7 @@ import {
 } from '../store/translation';
 import { batchActions } from '../store/translation/batchSlice';
 import { registry } from '../store/registry';
+import { resolveLocateTarget } from '../content/writeback';
 import { MagicCircle } from './MagicCircle';
 import { ThumbCell } from './ThumbCell';
 import { IconChevronLeft, IconChevronRight, IconClose, IconEdit, IconRefresh } from './icons';
@@ -381,8 +382,14 @@ export function Panel({
         </div>
 
         <div className="mt-footer__actions">
-          <button type="button" className="mt-ghostbtn" disabled={!caps.export} onClick={() => ctl.setNotice('导出请到 Box 的漫画库执行字节级复制')}>
-            导出
+          <button
+            type="button"
+            className="mt-ghostbtn"
+            data-testid="export-button"
+            disabled={!caps.export || ctl.exporting}
+            onClick={() => void ctl.onExport()}
+          >
+            {ctl.exporting ? '导出中…' : '导出'}
           </button>
 
           {selecting || state === 'submitting' ? (
@@ -555,9 +562,15 @@ function registryPage(key: string): number {
   return registry.pageOfKey(key);
 }
 
-/** 原图是否仍在 DOM —— 「定位图片」可用性的判据（同 P0-1 的 img.isConnected） */
+/**
+ * 「定位图片」可用性的判据 —— 与 `onLocate` **必须同一套**，否则会出现
+ * 「按钮可点但点下去说已离开」或「明明能定位却置灰」。
+ *
+ * 因此这里复用 `resolveLocateTarget` 的两级兜底：元素引用失效时，
+ * 按 `expectedUrl` 重新找一次，找得到就仍可点。
+ */
 function registryElementConnected(key: string): boolean {
-  return !!registry.elementOf(key)?.isConnected;
+  return resolveLocateTarget(registry.elementOf(key), registry.get(key)?.expectedUrl) !== null;
 }
 
 /** 放大预览的图片地址 */

@@ -125,34 +125,85 @@ export function getWriteBackRecords(): WriteBackRecord[] {
 export function locateImage(
   element: HTMLImageElement,
   options: { totalMs?: number; blinkMs?: number; blinks?: number } = {},
-): void {
+): boolean {
   const totalMs = options.totalMs ?? 1_200;
   const blinkMs = options.blinkMs ?? 300;
   const blinks = options.blinks ?? 2;
 
-  element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  if (!element.isConnected) return false;
+
+  // ① 滚动：某些站点的容器/样式会让 scrollIntoView 静默无效，
+  //    失败时退到按文档坐标手动滚（同一视觉目标：垂直居中）
+  let scrolled = false;
+  try {
+    element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    scrolled = true;
+  } catch {
+    scrolled = false;
+  }
+  if (!scrolled) {
+    try {
+      const r = element.getBoundingClientRect();
+      const top = r.top + window.scrollY - Math.max(0, (window.innerHeight - r.height) / 2);
+      window.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+    } catch {
+      /* 滚动失败不影响高亮 */
+    }
+  }
+
   element.setAttribute(LOCATE_HIGHLIGHT_ATTR, '1');
+
+  // ② 高亮必须带 important —— 站点 CSS 常写 `img { outline: none }`，
+  //    普通内联样式会被它盖掉，表现为「点了没反应」
+  const paint = (on: boolean): void => {
+    element.style.setProperty('outline', on ? '2px solid #FF8FBF' : 'none', 'important');
+    element.style.setProperty('outline-offset', on ? '2px' : '0', 'important');
+  };
+  const clear = (): void => {
+    element.style.removeProperty('outline');
+    element.style.removeProperty('outline-offset');
+    element.removeAttribute(LOCATE_HIGHLIGHT_ATTR);
+  };
+
+  // 立即画上第一帧 —— 否则要等第一个 tick（300ms）才见描边，
+  // 用户会先看到一段「什么都没发生」的空窗，判定为没生效
+  paint(true);
 
   let count = 0;
   const timer = window.setInterval(() => {
     count += 1;
-    const on = count % 2 === 1;
-    element.style.outline = on ? '2px solid #FF8FBF' : 'none';
-    element.style.outlineOffset = on ? '2px' : '0';
+    paint(count % 2 === 1);
     if (count >= blinks * 2) {
       window.clearInterval(timer);
-      element.style.outline = '';
-      element.style.outlineOffset = '';
-      element.removeAttribute(LOCATE_HIGHLIGHT_ATTR);
+      clear();
     }
   }, blinkMs);
 
-  // 保底清理：即使定时器被节流，也不留下永久描边
+  // 保底清理：即使定时器被后台节流，也不留下永久描边
   window.setTimeout(() => {
     window.clearInterval(timer);
-    element.style.outline = '';
-    element.style.outlineOffset = '';
+    clear();
   }, totalMs);
+
+  return true;
+}
+
+/**
+ * 为「定位图片」解析当前应高亮的元素。
+ *
+ * 两级兜底，**顺序不能反**：
+ *   ① 抓取时存下的元素引用 —— 最快，且已回写的图只有这条路能命中
+ *      （回写后 src 变成 blob URL，`findImageByExpectedUrl` 会跳过它）
+ *   ② 引用失效时（SPA 节点回收 / 懒加载重建）→ 按 `expectedUrl` 重新找
+ *      这是 `findImageByExpectedUrl` 存在的理由，定位此前一直没用上它
+ */
+export function resolveLocateTarget(
+  element: HTMLImageElement | undefined,
+  expectedUrl: string | undefined,
+): HTMLImageElement | null {
+  if (element && element.isConnected) return element;
+  if (expectedUrl) return findImageByExpectedUrl(expectedUrl);
+  return null;
 }
 
 /** 定位是否可用 —— 原图已离开当前 DOM 时置灰（判据同 P0-1 的 `img.isConnected`） */

@@ -78,3 +78,71 @@
 - **体量约束**：单份指引 > **40000 字符会被整份丢弃**（非截断）；桌面端首轮注入还在 **8000 字符**处截断。
   ⇒ 本文件控制在 **5336 字符**，细节一律指向事实源（README / acceptance.md / 本台账）。
 - **验证**：新增文件后 `npm test` 仍 **205/205**（P4-5 只读根 `README.md`，`assets-integrity` 只扫资源目录，均不受影响）。
+
+## D-10 「定位图片」失效修复 + 新增 zip 导出（2026-10-07）
+
+> 本轮是**用户报障驱动**（原话：导出功能没有生效，定位图片的功能也没有生效），不是文档问题；
+> 记在此处是因为两处都踩到了「契约口径 vs 用户口述」与「只在浏览器里才暴露的失效」两类坑，需要留档。
+
+### 10.1 定位：三个独立原因叠在一起，缺一都还是「点了没反应」
+
+- **① 高亮被站点 CSS 吃掉**。旧实现写普通内联样式 `element.style.outline = '2px solid #FF8FBF'`，
+  站点只要有一条 `img { outline: none }` 就能盖掉它 —— 用户看到的就是完全无反应。
+  改法：`element.style.setProperty('outline', v, 'important')`。
+  ⚠️ 断言侧配套陷阱：`getPropertyValue()` **不含**优先级，必须用 `getPropertyPriority()` 读，否则反证轮会假绿。
+- **② 首帧要等 300ms**。旧实现的闪烁定时器第一拍在 300ms 后才描边，期间无任何视觉反馈。
+  改法：进入后**立即**画一帧（`paint(true)`），再起闪烁。
+- **③ 元素引用失效就直接 disabled**。抓取时存下的是 `HTMLImageElement` 强引用；SPA 节点回收后
+  `isConnected === false`，旧逻辑此时把定位按钮置灰 —— 而仓库里本来就有抗 DOM 复用的
+  `findImageByExpectedUrl`，**定位这条路径一直没接上它**。
+  改法：新增 `resolveLocateTarget(element, expectedUrl)` 两级兜底 —— ① 引用仍有效 → 直接用；
+  ② 引用失效 → 按 `expectedUrl`（抓取那一刻的 `currentSrc`）重新在 DOM 里找；③ 都没有 → `null`。
+  `Panel.tsx` 的 `registryElementConnected` 同步改用它，按钮不再因引用失效而无故置灰。
+- **顺带**：`locateImage` 返回值 `void → boolean`，`scrollIntoView` 外包 try/catch 兜 `window.scrollTo`
+  （jsdom / 部分页面无 `scrollIntoView`）。命中后给出成功提示「已定位到该图（页面已滚动并高亮 1.2 秒）」，
+  两级都落空时提示「该图已不在页面上」—— 旧实现**无论成败都不吭声**，也是「没反应」观感的来源之一。
+
+### 10.2 导出：此前是纯占位，本轮落地为真导出
+
+- **原状**：Panel 的「导出」按钮只 `setNotice('导出功能待接入')`，**没有任何网络/落盘动作**（真占位）。
+- **落地语义（用户裁定）**：导出**原图 + 译文（如有）**为一个 zip，缺译文是**正常状态**，只回报不中断。
+- **命名口径偏差（需留档）**：用户口述是「`01` / `01_translate`」，实现按《03》§7.2 契约落为
+  **`001` / `001_translated`** —— 依据：① `SEQ_PAD = 3`；② `parseSeqFromFileName` 的正则
+  `/^(\d{3})(?:_translated)?\.…$/` **硬要求三位且后缀必须是 `_translated`**。
+  若照口述写两位 + `_translate`，落盘名会被命名层**反解析不出序号**，续编号（§7.4）随之错乱。
+  扩展名由响应 MIME 反查（jpg/webp/png），与 §7.2 一致。
+- **零新增依赖**：自写 **STORE 模式** zip 打包器 `src/zip/storeZip.ts`（local header / central directory / EOCD + CRC32）。
+  理由：图片字节本身已被 JPEG/PNG/WebP 压过，再 deflate 收益近乎为零，却要为此引入一个打包依赖
+  （AGENTS.md §2.6：新增依赖需确认）。文件名含中文，故 general purpose bit 11（UTF-8）置位。
+- **链路**：`TASK_EXPORT_ZIP`（新增消息类型）→ background 串行 `fetchLibraryFile` 取原图/译文字节 →
+  打包 → `browser.downloads.download({ saveAs: false })`。结果回报 `{files, missingTranslated[], failed[], bytes}`，
+  面板据此提示「已导出 N 个文件（M 张缺译文）」。blob URL **延迟 60s 再 revoke**（下载是异步的，过早释放会拿到 0 字节）。
+- **权限**：`downloads` 早在 `wxt.config.ts:31` 声明，本轮**未动权限清单**。
+
+### 10.3 钉死与反证
+
+- `tests/dom/locate.test.ts`（**新增 10 条**，分母 `EXPECTED_CASE_COUNT = 6`）：L1 命中返回 true + `important` 优先级 + 2s 后自动清除描边；
+  L2 离场返回 false 且不抛；L3/L4/L5 三级 `resolveLocateTarget`；L6 `scrollIntoView` 抛错时兜底 `window.scrollTo` 且仍算成功。
+  反证 R1（回填普通样式 ⇒ 无 `important`）/ R2（退回只用引用 ⇒ 引用失效时返回 null）/ R3（按位置找会命中错的节点）。
+  ⚠️ 环境事实：jsdom 会把 `img.src` 解析成**绝对地址**，写相对路径做期望值比对会假红。
+- `tests/zip/storeZip.test.ts`（**新增 11 条**，分母 `EXPECTED_CASE_COUNT = 8`）：逐字段钉死签名 / 偏移 / CRC / 标志位。
+  设计理由：zip 是**二进制**结构，写错一个偏移量不会抛异常，只会产出「下载成功但解压报损坏」的包 —— 典型静默失败。
+  Z7 用**独立解析路径**（自建 `u16/u32` little-endian 读，不复用实现）把数据按字节读回比对。
+- **独立第三方校验（不自检）**：把实现产出的字节落盘后交给 **Python `zipfile`** 验：`testzip()` 返回 None、
+  `namelist()` 中文路径正确、`compress_type == 0`（STORE）。防止「解析器与实现一起错」的假绿。
+- **结果**：`tsc --noEmit` 通过；`npm test` **226/226**（原 205，净增 21）。
+- **反证可复现性**：上述反证均为**断言式反证**（在测试内构造旧写法，断言其不满足正证判据），
+  无需改动实现源码即可复现，规避「改回旧代码后再还原」的 shasum 依赖。
+
+### 10.4 修改文件
+
+- `src/content/writeback.ts`（`locateImage` 返回 boolean + `!important` + 首帧 + `scrollIntoView` 兜底 + 新增 `resolveLocateTarget`）
+- `src/panel/controller.ts`（`onLocate` 改两级兜底 + 成败提示；新增 `onExport` / `exporting` / `ExportZipResult`）
+- `src/panel/Panel.tsx`（`registryElementConnected` 改两级兜底；导出按钮接真实动作 + 导出中态）
+- `src/types/messages.ts`（新增 `TASK_EXPORT_ZIP`）
+- `entrypoints/background.ts`（新增导出分支 + `extOf()`）
+- 新增：`src/zip/storeZip.ts` · `tests/zip/storeZip.test.ts` · `tests/dom/locate.test.ts`
+- 本文件（D-10）
+
+> ⚠️ 本轮**未提交 lock 文件改动**：`npm install` 顺带删掉了 `extension/package-lock.json` 里
+> 512 行其他平台的 optional 依赖（环境噪音，与本次修复无关），已 `git checkout` 还原。
