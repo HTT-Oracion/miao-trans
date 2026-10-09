@@ -82,7 +82,7 @@ a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90
 
 | 项 | 结果 |
 |---|---|
-| 插件单测 | **235/235**（ver2.1 英译中新增 `tests/direction.test.ts` 8 条 + 分母门；此前 `s8-engine-states` 两态分流、选择上限 50 的 4 条、定位修复 10 条、zip 导出 11 条均已计入） |
+| 插件单测 | **247/247**（ver2.1 英译中新增 `tests/direction.test.ts` 8 条 + 分母门，定位滚动新增 `tests/dom/scrollLocate.test.ts` 7 条 + 反证 4 条 + 分母门；此前 `s8-engine-states` 两态分流、选择上限 50 的 4 条、定位修复 10 条、zip 导出 11 条均已计入） |
 | 端到端验收（mock） | **30/30**（真实 Chromium + 未打包扩展，含像素级回写证明；ver2.1 新增 K1/K2 方向链路取证，并按 D-07 口径重写 H3/I 段失效断言） |
 | 「服务未就绪」路径 | `extension/e2e/noservice-probe.mjs` **10/10**（不启动 mock-service） |
 | 真机联调 E9（真引擎） | **19/0**（真实漫画站 31 张；序号 001–031 连续、串行不交错、31 项全成功） |

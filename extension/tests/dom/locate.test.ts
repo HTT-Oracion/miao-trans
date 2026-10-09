@@ -35,10 +35,28 @@ function makeImg(src: string): HTMLImageElement {
   return img;
 }
 
+/** jsdom 没有布局引擎，`getBoundingClientRect` 恒为 0 —— 桩一个可见矩形才能走到真实分支 */
+function stubVisible(el: HTMLElement, top: number, height: number): void {
+  Object.defineProperty(el, 'getBoundingClientRect', {
+    configurable: true,
+    value: () =>
+      ({
+        top,
+        bottom: top + height,
+        height,
+        left: 0,
+        right: 800,
+        width: 800,
+        x: 0,
+        y: top,
+        toJSON: () => ({}),
+      }) as DOMRect,
+  });
+}
+
 beforeEach(() => {
   document.body.innerHTML = '';
-  // jsdom 不实现这两个，不打桩会走进兜底分支，掩盖真实路径
-  vi.stubGlobal('scrollTo', vi.fn());
+  // jsdom 不实现 scrollIntoView，不打桩会走进兜底分支，掩盖真实路径
   Object.defineProperty(Element.prototype, 'scrollIntoView', {
     value: vi.fn(),
     configurable: true,
@@ -52,14 +70,16 @@ afterEach(() => {
 });
 
 describe('定位图片（分母钉死）', () => {
-  caseIt('L1', '命中时返回 true：滚动被调用，且描边带 important', () => {
+  caseIt('L1', '命中时返回 ok:true：描边带 important，且 1.2s 后自动清除', () => {
     const img = makeImg('/a.png');
+    // jsdom 无布局引擎（rect 恒 0），不桩一个可见矩形就会整条走进「无布局」分支
+    stubVisible(img, 100, 400);
     vi.useFakeTimers();
 
-    const ok = locateImage(img);
+    const r = locateImage(img);
 
-    expect(ok).toBe(true);
-    expect(img.scrollIntoView).toHaveBeenCalled();
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.scroll).toBe('already-visible'); // 已在视口 ⇒ 不该多滚
     // 关键：必须带 important，否则站点 CSS 能盖掉（这正是旧实现的失效原因）。
     // 注意 priority 要用 getPropertyPriority 读 —— getPropertyValue 只返回值，不含优先级
     expect(img.style.getPropertyPriority('outline')).toBe('important');
@@ -71,12 +91,12 @@ describe('定位图片（分母钉死）', () => {
     expect(img.style.getPropertyValue('outline')).toBe('');
   });
 
-  caseIt('L2', '元素已离开 DOM 时返回 false，且不抛异常', () => {
+  caseIt('L2', '元素已离开 DOM 时返回 ok:false，且不抛异常', () => {
     const img = makeImg('/b.png');
     img.remove();
     expect(img.isConnected).toBe(false);
     expect(() => locateImage(img)).not.toThrow();
-    expect(locateImage(img)).toBe(false);
+    expect(locateImage(img).ok).toBe(false);
   });
 
   caseIt('L3', 'resolveLocateTarget ①：元素引用仍有效 → 直接用它', () => {
@@ -103,7 +123,7 @@ describe('定位图片（分母钉死）', () => {
     expect(resolveLocateTarget(undefined, undefined)).toBeNull();
   });
 
-  caseIt('L6', 'scrollIntoView 不可用时兜底 window.scrollTo，且仍算定位成功', () => {
+  caseIt('L6', '原生 scrollIntoView 抛错也不影响高亮与返回（滚动由逐层兜底接管）', () => {
     const img = makeImg('/f.png');
     Object.defineProperty(Element.prototype, 'scrollIntoView', {
       value: () => {
@@ -114,10 +134,11 @@ describe('定位图片（分母钉死）', () => {
     });
     vi.useFakeTimers();
 
-    const ok = locateImage(img);
+    const r = locateImage(img);
 
-    expect(ok).toBe(true);
-    expect(window.scrollTo).toHaveBeenCalled();
+    // 滚动失败/不可能 ≠ 定位失败：图还在，就要照常高亮，只是提示语不同（见 scrollLocate 的 R3）
+    expect(r.ok).toBe(true);
+    expect(img.style.getPropertyPriority('outline')).toBe('important');
 
     vi.advanceTimersByTime(2000);
     expect(img.hasAttribute(LOCATE_HIGHLIGHT_ATTR)).toBe(false);

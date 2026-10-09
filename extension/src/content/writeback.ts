@@ -117,39 +117,160 @@ export function getWriteBackRecords(): WriteBackRecord[] {
 // ─────────────────────────── 定位图片 ───────────────────────────
 
 /**
+ * 滚动结果 —— 只有「成功 / 失败」两值是不够的。
+ *
+ * 失败至少有四种**含义完全不同**的情况，混成一个 false 就只能给出一句没用的提示，
+ * 用户无法区分「我该换页去看」还是「插件坏了」。因此逐条分开，由 `LOCATE_NOTICE` 一对一呈现。
+ */
+export type ScrollOutcome =
+  | 'scrolled' /** 已滚动到该图 */
+  | 'already-visible' /** 无需滚动：该图本来就在视口里 */
+  | 'no-layout' /** 该图当前不参与布局（懒加载占位 / 被隐藏），滚过去也没有意义 */
+  | 'not-scrollable'; /** 该图所在容器不可滚动（站点自定义滚动 / overflow 链断裂） */
+
+export type LocateResult = { ok: true; scroll: ScrollOutcome } | { ok: false };
+
+/** 提示语与 `ScrollOutcome` **一一对应**（单测钉死：「成功」不能拿去描述「没滚动」） */
+export const LOCATE_NOTICE: Record<ScrollOutcome, string> = {
+  scrolled: '已定位：页面已滚动到该图，高亮 1.2 秒',
+  'already-visible': '已定位：该图已在可视区域内，高亮 1.2 秒',
+  'no-layout': '已高亮，但该图当前未参与布局（懒加载占位或被隐藏），无法滚动过去',
+  'not-scrollable': '已高亮，但该图所在容器不可滚动，页面没能动',
+};
+
+/** 小于此尺寸视为「没有布局」—— 1×1 懒加载占位 gif 与 jsdom 都落在这里 */
+const MIN_LAYOUT_PX = 4;
+/** 视口内可见比例达到这个值就算「已经在眼前」，不必再滚 */
+const VISIBLE_ENOUGH = 0.6;
+
+/** 该元素在视口中的可见比例（0~1）；高度异常时按 0 处理 */
+function visibleRatio(rect: DOMRect): number {
+  const vh = window.innerHeight || document.documentElement?.clientHeight || 0;
+  if (vh <= 0 || rect.height <= 0) return 0;
+  const inter = Math.max(0, Math.min(rect.bottom, vh) - Math.max(rect.top, 0));
+  return inter / Math.min(rect.height, vh);
+}
+
+/**
+ * 从 `element` 起向上找**第一个真正参与布局**的节点作为滚动目标。
+ *
+ * 为什么需要爬：图片本身可能是 0 高（懒加载占位、`content-visibility` 折叠），
+ * 此时拿它算滚动位置没有意义，但它外面那层包裹 div 是有布局的 —— 滚到那层才对。
+ * 反过来，如果元素**被显式隐藏**（`display:none` / `visibility:hidden`），
+ * 祖先有布局也不该滚（滚过去用户还是看不到），如实判 `no-layout`。
+ */
+export function nearestLaidOutAncestor(element: HTMLElement | null): HTMLElement | null {
+  let cur: HTMLElement | null = element;
+  while (cur) {
+    const r = cur.getBoundingClientRect();
+    if (r.width >= MIN_LAYOUT_PX && r.height >= MIN_LAYOUT_PX) return cur;
+    let cs: CSSStyleDeclaration | undefined;
+    try {
+      cs = getComputedStyle(cur);
+    } catch {
+      cs = undefined;
+    }
+    if (cs && (cs.display === 'none' || cs.visibility === 'hidden')) return null;
+    cur = cur.parentElement;
+  }
+  return null;
+}
+
+function isScrollableY(el: HTMLElement): boolean {
+  let overflowY = '';
+  try {
+    overflowY = getComputedStyle(el).overflowY || '';
+  } catch {
+    return false;
+  }
+  if (overflowY !== 'auto' && overflowY !== 'scroll' && overflowY !== 'overlay') return false;
+  return el.scrollHeight - el.clientHeight > 1;
+}
+
+/** 可滚动的祖先，**内 → 外**；文档滚动器永远排在最后 */
+export function collectScrollers(element: HTMLElement): HTMLElement[] {
+  const out: HTMLElement[] = [];
+  const se = (document.scrollingElement ?? document.documentElement) as HTMLElement | null;
+  for (let p = element.parentElement; p; p = p.parentElement) {
+    if (p === se || p === document.body) continue;
+    if (isScrollableY(p)) out.push(p);
+  }
+  if (se) out.push(se);
+  return out;
+}
+
+/** 把 `target` 在 `scroller` 里垂直居中（目标比容器高时退化为顶部对齐） */
+export function centerWithin(target: HTMLElement, scroller: HTMLElement): void {
+  const r = target.getBoundingClientRect();
+  const cr = scroller.getBoundingClientRect();
+  const visibleH = scroller.clientHeight || window.innerHeight || 0;
+  const delta = r.top - cr.top - Math.max(0, (visibleH - r.height) / 2);
+  if (!Number.isFinite(delta) || Math.abs(delta) < 2) return; // 已居中，别做无意义的滚动
+  try {
+    scroller.scrollTop += delta;
+  } catch {
+    /* 极少：只读容器。不影响高亮 */
+  }
+}
+
+/**
+ * 把一个元素滚进视口 —— 「定位图片」的滚动部分。
+ *
+ * 为什么不能只调 `scrollIntoView` 就完事：它在部分站点上是**静默 no-op**（不抛异常、
+ * 页面纹丝不动），而调用方拿到的是 undefined，无从判断 ⇒ 用户看到「点了没反应」。
+ * 因此这里分三步，且**每步都可判**：
+ *   ① 先确认目标真的参与布局，否则滚了也白滚（如实报 `no-layout`）；
+ *   ② 再走浏览器原生（能正确处理 `scroll-margin` / sticky / 嵌套滚动容器）；
+ *   ③ 原生无效则**逐层手动居中**兜底 —— 每层都重新量，因为内层滚完会改变外层的相对位置。
+ *
+ * 用**瞬时**滚动（`behavior: 'auto'`）而非 smooth：长漫画页上平滑滚动动辄上千像素，
+ * 既慢又让「有没有滚成功」无法同步判定 —— 而判定不了，提示就只能是句谎话。
+ */
+export function scrollElementIntoView(element: HTMLElement): ScrollOutcome {
+  const target = nearestLaidOutAncestor(element);
+  if (!target) return 'no-layout';
+
+  if (visibleRatio(target.getBoundingClientRect()) >= VISIBLE_ENOUGH) return 'already-visible';
+
+  const scrollers = collectScrollers(target);
+  if (scrollers.length === 0) return 'not-scrollable';
+
+  try {
+    target.scrollIntoView({ block: 'center', inline: 'nearest' });
+  } catch {
+    /* 原生不可用 → 走下面的手动兜底 */
+  }
+
+  if (visibleRatio(target.getBoundingClientRect()) < VISIBLE_ENOUGH) {
+    for (const sc of scrollers) centerWithin(target, sc);
+  }
+
+  return visibleRatio(target.getBoundingClientRect()) >= VISIBLE_ENOUGH
+    ? 'scrolled'
+    : 'not-scrollable';
+}
+
+/**
  * 「定位图片」—— 菜单内唯一可执行项（《01》§6.3）。
  *
  * 行为：滚动到该原图并高亮 **1.2s**（2px `pink` 描边、闪烁 2 次 × 300ms）。
  * 纯定位、不改数据，任何面板状态都可点。
+ *
+ * 返回值带滚动结果：调用方**必须**据此出提示（此前无条件说「已滚动」，
+ * 实际没滚时也这么说，等于骗用户；这是本轮报障的直接成因之一）。
  */
 export function locateImage(
   element: HTMLImageElement,
   options: { totalMs?: number; blinkMs?: number; blinks?: number } = {},
-): boolean {
+): LocateResult {
   const totalMs = options.totalMs ?? 1_200;
   const blinkMs = options.blinkMs ?? 300;
   const blinks = options.blinks ?? 2;
 
-  if (!element.isConnected) return false;
+  if (!element.isConnected) return { ok: false };
 
-  // ① 滚动：某些站点的容器/样式会让 scrollIntoView 静默无效，
-  //    失败时退到按文档坐标手动滚（同一视觉目标：垂直居中）
-  let scrolled = false;
-  try {
-    element.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    scrolled = true;
-  } catch {
-    scrolled = false;
-  }
-  if (!scrolled) {
-    try {
-      const r = element.getBoundingClientRect();
-      const top = r.top + window.scrollY - Math.max(0, (window.innerHeight - r.height) / 2);
-      window.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
-    } catch {
-      /* 滚动失败不影响高亮 */
-    }
-  }
+  // ① 滚动：结果逐条可判，失败也如实回传
+  const scroll = scrollElementIntoView(element);
 
   element.setAttribute(LOCATE_HIGHLIGHT_ATTR, '1');
 
@@ -185,7 +306,7 @@ export function locateImage(
     clear();
   }, totalMs);
 
-  return true;
+  return { ok: true, scroll };
 }
 
 /**

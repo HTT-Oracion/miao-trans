@@ -25,7 +25,7 @@ import { toQueuePatch } from '../store/translation/queue';
 import { GRID } from '../theme/tokens';
 import { checkComicName, sortByReadingOrder, splitIntoBatches } from '../naming';
 import { decideSubmit, shouldClearSelection, countLeftDom, type OverLimitActionId } from '../selection/rules';
-import { locateImage, resolveLocateTarget, writeBackImage } from '../content/writeback';
+import { LOCATE_NOTICE, locateImage, resolveLocateTarget, writeBackImage } from '../content/writeback';
 import { installRouteWatcher } from '../content/routeWatcher';
 import { uuidV4 } from '../adapters/boxServiceClient';
 
@@ -766,8 +766,10 @@ export function usePanelController(
       setNotice('原图已离开当前页面');
       return;
     }
-    locateImage(target);
-    setNotice('已定位到该图（页面已滚动并高亮 1.2 秒）');
+    const r = locateImage(target);
+    // 提示语必须来自真实结果 —— 此前无条件说「已滚动」，实际没滚时也这么说，
+    // 用户无法判断是自己该换页，还是插件坏了。逐条分开，失败也要说清是哪种失败。
+    setNotice(r.ok ? LOCATE_NOTICE[r.scroll] : '原图已离开当前页面');
   }, []);
 
   return {

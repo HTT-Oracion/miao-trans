@@ -205,3 +205,62 @@
 - `src/types/messages.ts`（`TASK_SUBMIT` 加 `lang?`）· `entrypoints/background.ts`（透传 `req.lang`）
 - 新增 `tests/direction.test.ts` · `tests/boxServiceClient.test.ts`（旧断言标题按 ver2.1 更新口径）
 - `e2e/verify.mjs`（K1/K2 新增 + H3/I 段按 D-07 口径重写）
+
+## D-12 「定位图片」不滚动：滚动改为可判 + 逐层兜底，提示语不再撒谎（2026-10-10）
+
+> D-10 修的是「点了没反应」（描边被盖 / 首帧延迟 / 引用失效置灰）。本条是**用户二次报障**：
+> 「定位图片**没有滚动**到 DOM 对应图片的位置」—— 高亮已经能看见，问题收敛到滚动本身。
+
+### 12.1 根因：只调一次 `scrollIntoView`，既不兜底、也不验证，还无条件宣称成功
+
+- 旧实现：`try { element.scrollIntoView({behavior:'smooth', block:'center'}) } catch { 手动滚 }`，
+  **返回值被丢弃**，然后 `setNotice('已定位到该图（页面已滚动并高亮 1.2 秒）')` —— **无论滚没滚都这么说**。
+- 三类失效它都看不见：
+  ① `scrollIntoView` 在部分站点上是**静默 no-op**（不抛异常、页面纹丝不动），`try/catch` 抓不到；
+  ② 目标**不参与布局**（懒加载 1×1 占位、`content-visibility` 折叠、被隐藏）⇒ 算出来的位置本身无意义；
+  ③ **嵌套滚动容器**：只滚 window 滚不到内层容器里的图。
+- 后果不只是"没滚动"，而是**提示语在撒谎** —— 用户无法区分「我该自己翻页去找」还是「插件坏了」。
+  这条是本轮报障最难排查的部分：功能看起来"正常"（有提示），实际什么都没做。
+
+### 12.2 裁定
+
+- **滚动结果拆成四值**（`ScrollOutcome`）：`scrolled` / `already-visible` / `no-layout` / `not-scrollable`。
+  只有「成功/失败」两值不够 —— 失败的四种含义完全不同，混成一句就没法给可行动的提示。
+- **先判布局再滚**（`nearestLaidOutAncestor`）：元素自身 rect 小于 4px 时**向上爬**到第一个真正参与布局的祖先
+  （懒加载占位的外层包裹 div 通常是有布局的）；但若元素被**显式隐藏**（`display:none` / `visibility:hidden`）
+  则直接判 `no-layout` —— 祖先有布局也不滚，滚过去用户还是看不到。
+- **逐层居中兜底**：原生 `scrollIntoView` 之后**验证**是否真的进视口；没有就遍历所有可滚动祖先（内 → 外）
+  逐个 `scrollTop += delta` 居中，**每层都重新量**（内层滚完会改变外层相对位置）。
+- **改用瞬时滚动**（`behavior` 不指定 smooth）：长漫画页上平滑滚动动辄上千像素，既慢，又让
+  「有没有滚成功」**无法同步判定** —— 而判定不了，提示语就只能是句谎话。取舍记在此处。
+- **提示语一对一**（`LOCATE_NOTICE`）：`scrolled` 才许说「滚动」；其余三种措辞各自说清是哪种失败。
+  `controller.onLocate` 改为**按结果出提示**（`r.ok ? LOCATE_NOTICE[r.scroll] : '原图已离开当前页面'`）。
+- `locateImage` 返回值 `boolean → LocateResult`（`{ok:true, scroll} | {ok:false}`），
+  调用方**必须**消费 —— 旧签名返回 boolean 却无人接收，是"静默失败"的结构性成因。
+
+### 12.3 钉死（jsdom 里的**自建布局模型**）
+
+- 新增 `tests/dom/scrollLocate.test.ts`（**12 条**，分母 `EXPECTED_CASE_COUNT = 7` + 反证 4 + 分母门）：
+  S1 无布局 · S2 已在视口**且一个像素都不滚** · S3 滚动量精确等于「居中」而非随便滚 ·
+  S4 嵌套容器（内层居中 + 外层补位）· S5 无滚动余量 ⇒ 如实报 `not-scrollable` ·
+  S6 占位图爬到外层 · S7 原生抛错仍靠兜底滚到位。
+- ⚠️ **jsdom 陷阱（本轮最主要的测试设计成本）**：jsdom 没有布局引擎 —— `getBoundingClientRect` 恒 0、
+  `scrollTop` 是不可写的空壳。若照直写断言，要么恒真要么恒假。因此**自建极简布局模型**：
+  元素在文档坐标里位置固定，视口 rect = 文档坐标 − 容器 `scrollTop`（读写与钳制都桩掉）。
+  这样「滚动后是否真的可见」才是可判的。
+- **反证 4 条**（断言式，不改实现即可复现）：
+  R1 只认元素自身 rect ⇒ 占位图被判滚不动（旧口径）；R2 去掉逐层兜底 ⇒ 滚动量为 0；
+  R3 **提示语不得用「已滚动」描述没滚动的结果**（直接钉本轮报障的成因）；
+  R4 `centerWithin` 对已居中的目标不做无意义滚动（差值 < 2px 不动）。
+- `tests/dom/locate.test.ts` 同步按新返回类型改（L1/L2/L6）；L1 补桩可见矩形，
+  否则 jsdom 下整条走进「无布局」分支，掩盖真实路径。
+
+### 12.4 结果 / 修改文件
+
+- `tsc --noEmit` 0 错 · `npm test` **247/247**（本轮 **+12**；含并发会话 D-11 方向下发的 9 条）· `wxt build` 通过。
+- 修改：`src/content/writeback.ts`（新增 `ScrollOutcome` / `LocateResult` / `LOCATE_NOTICE` /
+  `nearestLaidOutAncestor` / `collectScrollers` / `centerWithin` / `scrollElementIntoView`，`locateImage` 改返回值）
+  · `src/panel/controller.ts`（`onLocate` 按结果出提示）· `tests/dom/locate.test.ts`
+  · 新增 `tests/dom/scrollLocate.test.ts` · `README.md` / `AGENTS.md`（基线 235 → 247）· 本文件。
+- ⚠️ **并发**：本条与 D-11（翻译方向，提交 `50582c4`）在同一工作区并行推进，D-11 先落库；
+  本轮全部改动按**路径限定** `git add`，不 `git add -A`。
