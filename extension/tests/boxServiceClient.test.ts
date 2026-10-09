@@ -118,7 +118,7 @@ describe('《03》§5.2 multipart 构造', () => {
     expect((list[1] as File).name).toBe('002.jpg');
   });
 
-  it('payload 为 application/json，且不含 lang / translator（首版由服务端固定）', async () => {
+  it('payload 为 application/json；未选方向时不含 lang（ver2.1 起方向随建单下发），translator 仍由服务端固定', async () => {
     const fd = buildTaskFormData({ comicName: '第12话', idempotencyKey: 'k' }, images);
     const payload = fd.get('payload') as Blob;
     expect(payload.type).toBe('application/json');

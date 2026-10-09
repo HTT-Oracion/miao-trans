@@ -16,6 +16,7 @@ import type {
   TaskStatus,
 } from '../../types/contract';
 import { clientStateFromTaskStatus, type ClientState, type ServicePhase } from '../../domain/clientState';
+import { DEFAULT_DIRECTION, type DirectionCode } from '../../domain/direction';
 
 export interface BatchErrorInfo {
   code: string;
@@ -46,6 +47,11 @@ export interface BatchState {
   hasToken: boolean;
 
   taskId: string | null;
+  /**
+   * 翻译方向（ver2.1）—— 与 `comicName` 同属「建单表单字段」：提交时随 `payload.lang`
+   * 下发，决定服务端选哪档翻译器（`en→zh` 走离线 nllb）。默认日译中。
+   */
+  direction: DirectionCode;
   comicName: string;
   /** 服务端回传的规范化结果 —— 有值时，落盘路径预览一律用它（《03》§5.2） */
   normalizedComicName: string | null;
@@ -87,6 +93,7 @@ const initialState: BatchState = {
   servicePort: null,
   hasToken: false,
   taskId: null,
+  direction: DEFAULT_DIRECTION,
   comicName: '',
   normalizedComicName: null,
   outputDir: null,
@@ -151,6 +158,15 @@ const slice = createSlice({
 
     comicNameChanged(s, a: PayloadAction<string>) {
       s.comicName = a.payload;
+    },
+
+    /**
+     * 切换翻译方向（ver2.1）。只收白名单规定的短码形态 —— 合法性由 UI 侧的
+     * `TRANSLATE_DIRECTIONS` 保证，服务端还会再校验一次（非法方向 400）。
+     * 这里显式构造新对象，避免与 `DEFAULT_DIRECTION` 常量共享引用。
+     */
+    directionChanged(s, a: PayloadAction<DirectionCode>) {
+      s.direction = { from: a.payload.from, to: a.payload.to };
     },
 
     submitStarted(s, a: PayloadAction<{ idempotencyKey: string; comicName: string }>) {
@@ -297,6 +313,8 @@ const slice = createSlice({
         enginePreparingState: s.enginePreparingState,
         servicePort: s.servicePort,
         hasToken: s.hasToken,
+        // 方向是用户偏好，跨任务保留（否则英文用户每轮都要重选一次）
+        direction: s.direction,
       };
     },
   },

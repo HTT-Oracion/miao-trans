@@ -146,3 +146,62 @@
 
 > ⚠️ 本轮**未提交 lock 文件改动**：`npm install` 顺带删掉了 `extension/package-lock.json` 里
 > 512 行其他平台的 optional 依赖（环境噪音，与本次修复无关），已 `git checkout` 还原。
+
+## D-11 插件端「翻译方向」贯通（ver2.1 英译中，2026-10-09）
+
+> 用户需求驱动（原话：让本机漫画支持英译中）。插件侧只加一根**建单参数**，不改任何契约 DTO ——
+> 方向早在《03》§5.2 的 `CreateTaskPayload.lang` 里预留（**契约层零改动**）。
+
+### 11.1 方向是建单参数，不是全局设置
+
+- 引擎默认档只做日译中；英文漫画必须由服务端按方向切到离线 `nllb`（见 `miao-dock` 的
+  `service/src/config.mjs::buildEngineConfig`）。方向随建单下发，**逐任务**生效。
+- 服务端对非法方向**硬拒**（400 `INVALID_TRANSLATE_LANG`），**不静默回落**。理由：静默回落会让
+  英文漫画整页原文照抄（引擎侧「identical to original」逐行过滤掉），用户看到的是一堆没翻译的图
+  而不是报错，排障成本远高于一次显式报错。
+- 白名单只有两条（日译中 / 英译中），与 `miao-dock` 的 `TRANSLATE_DIRECTIONS` **逐条对齐**；
+  插件不给自由输入。两侧漂移的后果：插件发出的方向被服务端判非法 → 提交报错。
+
+### 11.2 控件放在工具条，不为它加高面板
+
+- 面板几何（680）与七屏一致性是硬约束（`tests/spec-geometry.test.ts` 钉死），因此方向分段控件
+  塞进**已有工具条的剩余空间**（`flex-shrink:0`，高度 ≈20 ≤ 工具条 44），不新开分区、不改任何分区高度。
+- 只在**选图态**出现：方向是建单参数，任务提交后不可改（要改就得新任务）。
+- 默认日译中；`resetToIdle`（任务完成回选图态）**保留**方向 —— 否则英文用户每轮都要重选。
+
+### 11.3 钉死与反证
+
+- `tests/direction.test.ts`（**新增 8 条 + 1 条分母门**，`EXPECTED_CASE_COUNT = 8`）：
+  D1 白名单对齐；D2 默认值单一来源；D3 `sameDirection` 双键判定 + 未知方向回落；D4 防共享引用；
+  D5 `resetToIdle` 保留；D6/D8 直接在 **multipart 的 payload** 上取证 `lang`；D7 未选方向时 payload
+  **无** `lang` 键（守旧客户端零改动）。反证 5 条全部真跑变红：M1 删白名单 en / M2 `sameDirection` 恒真 /
+  M3 共享 action payload / M4 `resetToIdle` 去保留 / M5 formdata 剔 lang。
+  ⚠️ **D4 首版写成 `not.toBe(DEFAULT_DIRECTION)` 恒真**（共享的是 action payload 而非常量）⇒ M3 假绿；
+  改为 `not.toBe(payload)` 后 M3 真红。**断言测错对象 = 假绿**，此处留档。
+- `e2e/verify.mjs` 新增 **K1 / K2**（+2 → **30/30**）：K1 断分段控件可见且可切换（`aria-pressed` 三值）；
+  K2 **不看 UI**，直接读 mock 落盘的任务清单 `<MOCK_STATE_DIR>/tasks/<taskId>.json` 的 `lang` 字段，
+  证明「插件选的英译中真的到了服务端」。反证 3 条真跑变红：M6 控件不可见 → K1 红；M7 controller 不带
+  lang → K2 红；M8 background 丢 `req.lang` → K2 红。
+  ⚠️ **M6 首版用 HTML `hidden` 属性无效**：作者样式 `.mt-dirseg{display:inline-flex}` 压过 UA 的
+  `[hidden]{display:none}`，元素照样可见 ⇒ 假绿。改用**行内** `display:none` 才真红。
+  ⇒ 凡「隐藏元素」类反证，**一律用行内样式**。
+
+### 11.4 顺带修掉 e2e 的失效断言（D-07 遗留）
+
+- `verify.mjs` 的 H3 / I1 / I2 仍写着「第 21 张即越限、提交被硬拦」—— 这是**上限 20 时代**的口径。
+  D-07 把上限抬到 50 后**已失效**：21 张属正常区间，提交不再被拦，于是永远等不到超限弹层，整个 e2e
+  在 I2 超时中断（⚠️ 即 **AGENTS/README 里「27/27」是失效声明**，HEAD 上基线长期是红的）。
+- 裁定：按当前口径**重写**（不删）。H3 改判 20 张为 normal；I 段改为先把素材堆到 52 张（**追加 4 次**，
+  素材页初始 20 张而非 28）再「逐张 + 全选本页 + 翻页」凑到真越限（>50），恢复对「软拦边界 / 提交硬拦 /
+  拦截时不发请求 / 裁剪动作」的完整覆盖。修完 e2e **30/30** 真绿。
+
+### 11.5 修改文件
+
+- 新增 `src/domain/direction.ts`（白名单 / 默认值 / 等价判定 / 文案回落）
+- `src/store/translation/batchSlice.ts`（`direction` 状态 + `directionChanged` + `resetToIdle` 保留）
+- `src/store/translation/index.ts`（`selectDirection`）
+- `src/panel/Panel.tsx`（工具条内方向分段控件）· `src/panel/panel.css`（`.mt-dirseg`，不加高）
+- `src/panel/controller.ts`（mirror 加 `direction` + `directionRef` + `doSubmit` 带 `lang`）
+- `src/types/messages.ts`（`TASK_SUBMIT` 加 `lang?`）· `entrypoints/background.ts`（透传 `req.lang`）
+- 新增 `tests/direction.test.ts` · `tests/boxServiceClient.test.ts`（旧断言标题按 ver2.1 更新口径）
+- `e2e/verify.mjs`（K1/K2 新增 + H3/I 段按 D-07 口径重写）

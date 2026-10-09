@@ -270,6 +270,8 @@ async function handle(req: BgRequest, tabId: number): Promise<BgResponse> {
       const created: TaskCreatedDto = await client().createTask(
         {
           comicName: req.comicName,
+          // ver2.1：方向随建单下发（`payload.lang`）；未选时 undefined ⇒ 服务端落默认方向
+          ...(req.lang ? { lang: req.lang } : {}),
           clientTaskRef: req.clientTaskRef,
           idempotencyKey: req.idempotencyKey,
         },

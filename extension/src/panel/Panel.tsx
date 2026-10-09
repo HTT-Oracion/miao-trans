@@ -32,6 +32,7 @@ import {
   selectBatch,
   selectComicNameCheck,
   selectCounter,
+  selectDirection,
   selectHintRow,
   selectInlineHint,
   selectOutputPathPreview,
@@ -41,6 +42,7 @@ import {
   type RootState,
 } from '../store/translation';
 import { batchActions } from '../store/translation/batchSlice';
+import { sameDirection, TRANSLATE_DIRECTIONS } from '../domain/direction';
 import { registry } from '../store/registry';
 import { resolveLocateTarget } from '../content/writeback';
 import { MagicCircle } from './MagicCircle';
@@ -91,6 +93,7 @@ export function Panel({
   const receipt = useSelector(selectReceipt);
   const pathPreview = useSelector(selectOutputPathPreview);
   const nameCheck = useSelector(selectComicNameCheck);
+  const direction = useSelector(selectDirection);
   const items = useSelector((s: RootState) => s.item.bySeq);
   const selectedKeys = useSelector((s: RootState) => s.selection.selectedKeys);
   const pagesWithSel = useSelector((s: RootState) => pagesWithSelection(s.selection));
@@ -105,6 +108,7 @@ export function Panel({
     lastEventId,
     eventsConnected,
     comicName: batch.comicName,
+    direction,
   });
   const caps = capabilitiesOf(batch.state);
   const state: ClientState = batch.state;
@@ -266,6 +270,28 @@ export function Panel({
             <span className={`mt-count mt-count--${counter.tone}`} data-testid="selection-counter">
               {counter.text}
             </span>
+            {/*
+              ── 翻译方向分段控件（ver2.1）──
+              只在选图态出现：方向是**建单参数**，任务提交后不可更改（要改就得新任务）。
+              放在工具条内的剩余空间，而非新开一行 —— 面板几何（680）与七屏一致性
+              是硬约束（`spec-geometry.test.ts` 钉死），不得为控件加高。
+            */}
+            <div className="mt-dirseg" role="group" aria-label="翻译方向" data-testid="direction-seg">
+              {TRANSLATE_DIRECTIONS.map((d) => {
+                const on = sameDirection(d, direction);
+                return (
+                  <button
+                    key={d.label}
+                    type="button"
+                    className={`mt-dirseg__opt${on ? ' mt-dirseg__opt--on' : ''}`}
+                    aria-pressed={on}
+                    onClick={() => dispatch(batchActions.directionChanged({ from: d.from, to: d.to }))}
+                  >
+                    {d.label}
+                  </button>
+                );
+              })}
+            </div>
             <div className="mt-toolbar__actions">
               {inlineHint && <span className="mt-inlinehint">{inlineHint}</span>}
               <button type="button" className="mt-iconbtn" aria-label="重新扫描本页图片" onClick={() => void ctl.onRescan()}>

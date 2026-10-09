@@ -8,6 +8,7 @@
  */
 
 import { configureStore } from '@reduxjs/toolkit';
+import type { DirectionCode } from '../../domain/direction';
 import { batchActions, batchInitialState, batchReducer, type BatchState } from './batchSlice';
 import { itemReducer, thumbStatusOfSeq, type ItemState } from './itemSlice';
 import {
@@ -132,3 +133,6 @@ export function selectOutputPathPreview(s: RootState): string {
 export function selectComicNameCheck(s: RootState) {
   return checkComicName(s.batch.comicName);
 }
+
+/** 当前翻译方向（ver2.1）—— 分段控件的选中态与提交时的 `payload.lang` 同源 */
+export const selectDirection = (s: RootState): DirectionCode => s.batch.direction;

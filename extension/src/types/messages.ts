@@ -30,6 +30,11 @@ export type BgRequest =
       comicName: string;
       idempotencyKey: string;
       clientTaskRef: string;
+      /**
+       * 翻译方向（ver2.1）—— 随建单下发到 `payload.lang`。缺省时不带该字段，
+       * 服务端落默认方向（日译中），旧客户端行为不变。
+       */
+      lang?: { from: string; to: string };
       items: Array<{ seq: number; key: string }>;
     }
   | {

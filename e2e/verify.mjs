@@ -50,6 +50,8 @@ const SHOT_FAIL = path.join(ARTIFACTS, 'fail.png');
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'miao-verify-'));
 const mockRoot = path.join(tmp, 'Box 漫画');
+/** mock 的任务清单落盘目录（`<MOCK_STATE_DIR>/tasks/<taskId>.json`）—— K2 方向取证要读它 */
+const mockStateDir = path.join(tmp, 'state');
 const procs = [];
 function start(relScript, env) {
   const p = spawn(process.execPath, [path.join(REPO, relScript)], {
@@ -124,7 +126,7 @@ try {
   start('mock-service/src/server.mjs', {
     MOCK_PORT,
     MOCK_ROOT: mockRoot,
-    MOCK_STATE_DIR: path.join(tmp, 'state'),
+    MOCK_STATE_DIR: mockStateDir,
     MOCK_ITEM_MS: '120',
   });
   start('mock-service/src/page.mjs', { MOCK_PAGE_PORT: PAGE_PORT });
@@ -208,6 +210,22 @@ try {
   const counter1 = await page.locator('[data-testid="selection-counter"]').innerText();
   check('D1 全选后计数 = 12', /12/.test(counter1), `text="${counter1.trim()}"`);
 
+  // ── 翻译方向（ver2.1）：切到「英译中」—— 提交前的一次交互，方向必须随建单下发 ──
+  // 该控件与「漫画名」同属建单参数，只应在选图态出现；这里同时守「可见」与「可切换」。
+  const dirSeg = page.locator('[data-testid="direction-seg"]');
+  await dirSeg.waitFor({ state: 'visible', timeout: 8000 });
+  const dirBtnEn = dirSeg.locator('button:has-text("英译中")');
+  const dirBtnJa = dirSeg.locator('button:has-text("日译中")');
+  const jaBefore = await dirBtnJa.getAttribute('aria-pressed');
+  await dirBtnEn.click();
+  const enAfter = await dirBtnEn.getAttribute('aria-pressed');
+  const jaAfter = await dirBtnJa.getAttribute('aria-pressed');
+  check(
+    'K1 方向分段控件可切换：默认日译中 → 点英译中后 en=true / ja=false',
+    jaBefore === 'true' && enAfter === 'true' && jaAfter === 'false',
+    `默认ja=${jaBefore} · 点击后 en=${enAfter} ja=${jaAfter}`,
+  );
+
   // ── 无限滚动：追加 8 张 → 已选 12 不被误清（P0-2：URL 未变、无图离开 DOM）──
   await page.locator('button:has-text("追加 8 张")').click();
   await sleep(1500); // routeWatcher 400ms 聚合 + 判定窗口
@@ -239,6 +257,34 @@ try {
   );  const summary = await page.locator('[data-testid="toolbar-summary"]').innerText();
   check('D2 提交后到达完成态', true, `summary="${summary.trim()}"`);
   check('D3 全程无页面 JS 异常', pageErrors.length === 0, pageErrors.join(' | ').slice(0, 200));
+
+  /*
+   * ── K2：方向随建单下发取证（ver2.1）──
+   *
+   * 断言的是「插件选的英译中真的到了服务端」，因此不看面板、不看 store，直接读
+   * mock 按任务落盘的清单（`<MOCK_STATE_DIR>/tasks/<taskId>.json`，字段 `lang`）。
+   * 只看前端 UI 会被「切了但没下发」这种断链骗过 —— 那正是本组要防的静默失败。
+   */
+  {
+    const tasksDir = path.join(mockStateDir, 'tasks');
+    let lang = null;
+    let scanned = 0;
+    try {
+      for (const f of fs.readdirSync(tasksDir).filter((n) => n.endsWith('.json'))) {
+        scanned += 1;
+        const t = JSON.parse(fs.readFileSync(path.join(tasksDir, f), 'utf8'));
+        if (t.comicName === COMIC_NAME || t.normalizedComicName === COMIC_NAME) {
+          lang = t.lang;
+          break;
+        }
+      }
+    } catch { /* 目录还没建 → lang 保持 null，断言会红 */ }
+    check(
+      'K2 方向随建单下发：服务端任务 lang = {from:"en",to:"zh"}',
+      Boolean(lang) && lang.from === 'en' && lang.to === 'zh',
+      `扫描 ${scanned} 个任务清单 · lang=${JSON.stringify(lang)}`,
+    );
+  }
 
   // ── 回写像素验证（P0-1 的结果面：页面图 = 译文）──
   // 只对 src 已替换为 blob: 的图断言译文色相；seq = 该图在 DOM（阅读顺序）中的位次。
@@ -322,39 +368,68 @@ try {
   const counter3 = await counterEl.innerText();
   const cls3 = await counterEl.getAttribute('class');
   check('H2 全选 20 张计数 = 20', /20/.test(counter3), `text="${counter3.trim()}"`);
-  // 三态 token：≤19 ink-2 / =20 at-limit（yellow）/ >20 over-limit（error）；
-  // 颜色由 panel.css 绑定 yellow 令牌（spec-geometry 单测已核对），e2e 断结构类名。
-  check('H3 计数 = 20 时进入 at-limit（yellow）态', /at-limit/.test(cls3 ?? ''), `class="${cls3}"`);
+  // 三态 token：<20 ink-2 / ≥20 且 ≤50 normal / >50 over-limit（error）。
+  // ⚠️ D-07 已把**选择上限**从 20 抬到 50（20 与单批上限解耦）—— 因此 20 张是
+  //    「正常区间」而不是「已达上限」，颜色钉在 normal；越限要到 51 张才成立（见 I 段）。
+  check('H3 计数 = 20 时属正常区间（D-07 上限 50 · tone normal）', /mt-count--normal/.test(cls3 ?? ''), `class="${cls3}"`);
 
-  // ── 选择阶段软拦（§5.1：第 21 张仍允许勾选）→ 提交硬拦 ──
-  // 追加 8 张（20→28，分 2 页）→ 重扫（选择态工具条的刷新按钮）→ 已选 20 保留
+  /*
+   * ── 选择上限（《01》§5.1）—— D-07 口径：上限已从 20 抬到 50 ──
+   *
+   * ⚠️ 本段旧断言写的是「第 21 张即越限、提交被硬拦」，在 D-07（上限 50）落地后
+   *    **已失效**（21 张属正常区间，提交不再被拦、也就永远等不到超限弹层）。
+   *    这里重写为当前口径的正向判据，并保留原覆盖点：软拦边界 + 提交硬拦 + 拦截时不发请求。
+   *    做法：把素材堆到 52 张（>50），用「逐张 + 全选本页 + 翻页」凑到真越限。
+   */
+  // 追加 4 次（20 → 52，跨 3 页）后重扫
+  await page.locator('button:has-text("追加 8 张")').click();
+  await page.locator('button:has-text("追加 8 张")').click();
+  await page.locator('button:has-text("追加 8 张")').click();
   await page.locator('button:has-text("追加 8 张")').click();
   await page.locator('button[aria-label="重新扫描本页图片"]').click();
   await waitFor(async () => {
     const t = await page.locator('.mt-panel__pagehint').first().innerText();
-    return /共 28 张/.test(t);
-  }, 10000, '重扫到 28 张');
+    return /共 52 张/.test(t);
+  }, 10000, '重扫到 52 张');
   const counterKept = await counterEl.innerText();
-  check('I0 重扫到 28 张（2 页）后已选 20 保留', /20/.test(counterKept), `text="${counterKept.trim()}"`);
+  check('I0 重扫到 52 张（3 页）后已选 20 保留', /20/.test(counterKept), `text="${counterKept.trim()}"`);
+
+  // 21 张：>20 但 ≤50 → 正常区间，**不**越限（守 D-07 的边界不是 20）
   await page.locator('button[aria-label="下一页"]').click();
   // 勾选层是 checkbox 按钮（cell 主体点击是放大预览），seq 21 = 第 2 页第一格
   await page.locator('button[aria-label="第 21 张，未选"]').click();
+  const counter21 = await counterEl.innerText();
+  const cls21 = await counterEl.getAttribute('class');
+  check(
+    'I1 第 21 张可勾选且不越限（tone normal · D-07 上限 50）',
+    /21/.test(counter21) && /mt-count--normal/.test(cls21 ?? ''),
+    `text="${counter21.trim()}" class="${cls21}"`,
+  );
+
+  // 凑到 52 张 → 真越限（>50）：第 2 页全选 → 40，翻第 3 页全选（12 张）→ 52
+  await page.locator('button[aria-label="全选本页"]').click();
+  await page.locator('button[aria-label="下一页"]').click();
+  await page.locator('button[aria-label="全选本页"]').click();
   const counter4 = await counterEl.innerText();
   const cls4 = await counterEl.getAttribute('class');
-  check('I1 第 21 张仍可勾选，计数 = 21 且转 error 色调', /21/.test(counter4) && /over-limit/.test(cls4 ?? ''), `text="${counter4.trim()}" class="${cls4}"`);
+  check(
+    'I2 凑到 52 张（>50）时转 over-limit 色调',
+    /52/.test(counter4) && /over-limit/.test(cls4 ?? ''),
+    `text="${counter4.trim()}" class="${cls4}"`,
+  );
   await page.locator('[data-testid="submit-button"]').click();
   await page.locator('[data-testid="over-limit-dialog"]').waitFor({ state: 'visible', timeout: 5000 });
-  check('I2 超限被拦截：弹层出现', true);
+  check('I3 越限被拦截：弹层出现', true);
   {
     const r = await fetch(`http://127.0.0.1:${MOCK_PORT}/api/v1/queue`, {
       headers: { 'X-Box-Token': TOKEN },
     });
     const q = await r.json();
-    check('I3 拦截时不发网络请求（mock 队列为空）', q.running === null && q.queued.length === 0, JSON.stringify(q).slice(0, 120));
+    check('I4 拦截时不发网络请求（mock 队列为空）', q.running === null && q.queued.length === 0, JSON.stringify(q).slice(0, 120));
   }
-  await page.locator('button:has-text("取消勾选（回到 20 张内）")').click();
-  await waitFor(async () => /20/.test(await counterEl.innerText()), 5000, '裁剪回 20');
-  check('I4 「裁剪到 20」动作生效', true);
+  await page.locator('button:has-text("取消勾选（回到 50 张内）")').click();
+  await waitFor(async () => /50/.test(await counterEl.innerText()), 5000, '裁剪回 50');
+  check('I5 「裁剪到 50」动作生效', true);
 
   // ── SPA 换页 → 选择清空（P0-2 口径裁定）──
   await page.locator('button:has-text("SPA 换页")').click();

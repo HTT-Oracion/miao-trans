@@ -382,6 +382,38 @@
   color: var(--mt-ink);
 }
 
+/**
+ * 翻译方向分段控件（ver2.1）—— 工具条内的紧凑两段控件。
+ *
+ * 高度由 16px 行高 + 上下各 1px padding ≈ 20 ≤ 工具条 44，不改变任何分区几何。
+ * 选中项用 pink（主交互色）并在深色下取 on-accent 文字色；未选中用 muted。
+ */
+.mt-dirseg {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  border-radius: 999px;
+  background: var(--mt-surface-2);
+  border: 1px solid var(--mt-line);
+  flex-shrink: 0;
+}
+.mt-dirseg__opt {
+  border: none;
+  background: none;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--mt-muted);
+  font-family: var(--mt-font-body);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.mt-dirseg__opt--on {
+  background: var(--mt-pink);
+  color: var(--mt-on-accent);
+}
+
 .mt-panel__grid {
   padding: 16px;
   /* 唯一可收缩的分区：矮视口下面板 max-height 收缩时，网格区滚动兜底。

@@ -15,6 +15,7 @@ import type { ItemDto, QueueDto, SseEnvelope, TaskCreatedDto, TaskDto } from '..
 import { BATCH_LIMIT, BoxServiceError, SELECT_LIMIT, SSE_STALE_MS, SSE_WATCHDOG_TICK_MS, enginePreparingStateOf } from '../types/contract';
 import type { BgPush, BgRequest, BgResponse } from '../types/messages';
 import { isActive, type ClientState, ERROR_COPY } from '../domain/clientState';
+import type { DirectionCode } from '../domain/direction';
 import { collectOrderedImages, type PageImage } from '../collectImages';
 import { registry } from '../store/registry';
 import { batchActions } from '../store/translation/batchSlice';
@@ -128,6 +129,8 @@ export function usePanelController(
     eventsConnected: boolean;
     /** 漫画名 —— 提交守卫的唯一数据源（与按钮 disabled 判断同源，见 comicNameRef 注释） */
     comicName: string;
+    /** 翻译方向（ver2.1）—— 提交时随建单下发；重试沿用同一方向 */
+    direction: DirectionCode;
   },
 ): PanelController {
   const [previewKey, setPreviewKey] = useState<string | null>(null);
@@ -403,6 +406,13 @@ export function usePanelController(
    */
   const comicNameRef = useRef<string>(mirror.comicName);
   comicNameRef.current = mirror.comicName;
+  /**
+   * 翻译方向镜像（ver2.1）—— 与 `comicNameRef` 同一模式：`doSubmit` 被
+   * `onSubmit` / `onRetryFailed` 两条路径调用，方向必须取**调用时刻**的最新值
+   * （而不是闭包捕获时的旧值），否则「切了方向再重试」会退回旧方向。
+   */
+  const directionRef = useRef<DirectionCode>(mirror.direction);
+  directionRef.current = mirror.direction;
   useEffect(() => {
     const dispose = installRouteWatcher((info) => {
       const selected = selectedKeysRef.current;
@@ -544,6 +554,8 @@ export function usePanelController(
           comicName,
           idempotencyKey,
           clientTaskRef: `ext-${idempotencyKey.slice(0, 8)}`,
+          // ver2.1：方向随建单下发，`doSubmit` 的调用时刻取值（切方向后重试也生效）
+          lang: { from: directionRef.current.from, to: directionRef.current.to },
           items: first.map((x) => ({ seq: x.seq, key: x.key })),
         });
         ctx.current.taskId = created.taskId;
