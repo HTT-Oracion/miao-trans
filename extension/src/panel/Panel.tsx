@@ -202,6 +202,7 @@ export function Panel({
               .filter(Boolean)
               .join(' ')}
             value={batch.comicName}
+            autoComplete='off'
             readOnly={!caps.comicName}
             placeholder="例：第12话 · 学园祭"
             status={nameCheck.ok ? undefined : 'error'}

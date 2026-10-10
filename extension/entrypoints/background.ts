@@ -312,6 +312,10 @@ async function handle(req: BgRequest, tabId: number): Promise<BgResponse> {
       return ok(q);
     }
 
+    // 漫画库列表 —— 供面板提交前做重名校验（R1）
+    case 'LIBRARY_LIST':
+      return ok(await client().getLibrary());
+
     case 'TASK_WATCH_START': {
       startWatch(tabId, req.taskId, req.lastEventId ?? null);
       return ok({ watching: true });

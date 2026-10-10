@@ -11,7 +11,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Dispatch, UnknownAction } from '@reduxjs/toolkit';
 import { browser } from 'wxt/browser';
 
-import type { ItemDto, QueueDto, SseEnvelope, TaskCreatedDto, TaskDto } from '../types/contract';
+import type { ItemDto, LibraryDto, QueueDto, SseEnvelope, TaskCreatedDto, TaskDto } from '../types/contract';
 import { BATCH_LIMIT, BoxServiceError, SELECT_LIMIT, SSE_STALE_MS, SSE_WATCHDOG_TICK_MS, enginePreparingStateOf } from '../types/contract';
 import type { BgPush, BgRequest, BgResponse } from '../types/messages';
 import { isActive, type ClientState, ERROR_COPY } from '../domain/clientState';
@@ -499,10 +499,42 @@ export function usePanelController(
 
   /** 真正的提交：抓字节 → 按阅读顺序切批 → 第一批 POST /tasks → 其余 append 到**同一任务** */
   const doSubmit = useCallback(
-    async (keys: string[], comicName: string) => {
-      if (!checkComicName(comicName).ok) {
+    async (keys: string[], comicName: string, opts?: { allowDuplicate?: boolean }) => {
+      const check = checkComicName(comicName);
+      if (!check.ok) {
         setNotice('请填写漫画名');
         return;
+      }
+      /**
+       * **重名校验（R1）**：漫画名已存在时直接提示错误并**不建任务队列**。
+       *
+       * 为什么放在抓字节之前：抓图可能数十 MB，重名这一关过不去就没必要先抓。
+       *
+       * 为什么排除 `allowDuplicate`（=「重试失败项」路径）：那条路是**续编号**语义
+       * —— 把失败页作为新任务提交到同名目录（服务端续 seq），同名是**预期行为**，
+       * 不是重复提交。参见 `onRetryFailed`。
+       *
+       * 比对口径：客户端 `checkComicName().normalized` 与服务端 `normalizeComicName` 是
+       * 同源管线（NFKC 起手、同一套剥离规则），而 `GET /library` 的 `comicName/dirName`
+       * 就是落盘目录名（= 服务端规范化结果），因此两边可直接比。
+       *
+       * 查库失败**不阻断提交**：重名校验是「防呆」，不该因为一次读库失败让正常提交用不了；
+       * 且服务端对同名本就有「续编号、不覆盖」的兜底（契约 §6.3），放行是安全的。
+       */
+      if (!opts?.allowDuplicate) {
+        const normalized = check.normalized;
+        try {
+          const lib = await sendBg<LibraryDto>({ type: 'LIBRARY_LIST' });
+          const exists = (lib.comics ?? []).some(
+            (c) => c.comicName === normalized || c.dirName === normalized,
+          );
+          if (exists) {
+            setNotice(`漫画名「${normalized}」已存在，请换个名字或去漫画库「继续翻译」`);
+            return;
+          }
+        } catch {
+          // 读库不可达 —— 交给服务端的「续编号、不覆盖」兜底，不在此阻断
+        }
       }
       setBusy(true);
       setNotice(null);
@@ -704,6 +736,9 @@ export function usePanelController(
    * 实现为：把失败项取出，作为**新任务**提交（comicName 复用 → 服务端续编号）。
    * 这与《01》§7「failed 的重试 = 新建任务」同源；对 partial_failed 则是
    * 「只把失败的那几张作为新任务」。
+   *
+   * ⚠️ 这条路径**必须**带 `allowDuplicate`：续编号本来就与已有漫画同名，
+   * 若走默认的重名校验会被自己拦下（R1 的例外，见 `doSubmit`）。
    */
   const onRetryFailed = useCallback(async () => {
     const plan = ctx.current.plan;
@@ -715,7 +750,7 @@ export function usePanelController(
       setNotice('没有可重试的失败项');
       return;
     }
-    await doSubmit(failedKeys, ctx.current.comicName);
+    await doSubmit(failedKeys, ctx.current.comicName, { allowDuplicate: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [doSubmit]);
 

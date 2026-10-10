@@ -46,6 +46,13 @@ export type BgRequest =
   | { type: 'TASK_CANCEL'; taskId: string }
   | { type: 'TASK_REFRESH'; taskId: string; itemsFrom?: number; itemsTo?: number }
   | { type: 'QUEUE_REFRESH'; taskId: string }
+  /**
+   * 读漫画库（`GET /library`）。
+   *
+   * 用途：提交前**重名校验**（若库里已有同名漫画 → 直接提示，不建任务队列）。
+   * 必须经 background 取（令牌 + `chrome-extension://` origin 都在那侧，见本文件开头）。
+   */
+  | { type: 'LIBRARY_LIST' }
   /** 开始/停止消费事件流；`lastEventId` 用于 P0-3 的重连恢复 */
   | { type: 'TASK_WATCH_START'; taskId: string; lastEventId?: string | null }
   | { type: 'TASK_WATCH_STOP'; taskId: string }
