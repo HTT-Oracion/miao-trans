@@ -264,3 +264,45 @@
   · 新增 `tests/dom/scrollLocate.test.ts` · `README.md` / `AGENTS.md`（基线 235 → 247）· 本文件。
 - ⚠️ **并发**：本条与 D-11（翻译方向，提交 `50582c4`）在同一工作区并行推进，D-11 先落库；
   本轮全部改动按**路径限定** `git add`，不 `git add -A`。
+
+## D-13 「服务未就绪」浮层可关闭 + 徽标轻闪可重开（2026-10-12）
+
+用户报障：面板一打开就弹「服务未就绪」，没有关闭按钮 —— 首版不支持协议唤起（P2-03），
+这个浮层会**每次开面板都弹**，对"只想先看看面板"的人是阻碍。
+
+### 13.1 交互裁定（为什么不做成"关了就再也不弹"）
+
+- **只 `absent` 态可关**：关掉浮层不等于问题消失，所以提示必须**换地方** —— 头徽标边框轻闪
+  （`--pulsing`，box-shadow 外环扩散），**点徽标重开**浮层。三个状态是同一件事的三段表达。
+- **「引擎准备中」不给关**：准备中浮层盖住面板是**故意的**（引擎没好时不该让人操作面板），
+  关掉它等于放行一个必然失败的操作。关闭按钮只在 `!preparing` 分支渲染。
+- **离开 `absent` 自动复位**：`absent → ready → absent` 时浮层必须重新弹、徽标不再闪。
+  复位挂在 controller 的 `useEffect`（`mirror.servicePhase !== 'absent'`），
+  判据写反（`=== 'absent'`）会让两个提醒同时永久失效 —— 反证 M1。
+- **徽标可点态渲染 `<button>` 而非 span 挂 onClick**：键盘可达（span 会被 Tab 跳过）、语义正确；
+  按钮 UA 底色在 `.mt-panel__service` 里重置，与 span 同貌。
+- **无障碍**：`prefers-reduced-motion: reduce` 时停闪，但**换成静态外环** —— 提示不能丢，只是不许动。
+
+### 13.2 钉死（单测 4 条 + 探针 3 条 + 反证 8 条）
+
+- `tests/s8-engine-states.test.ts` 新增 **P5-1…P5-4**（分母 27 → **31**）：
+  P5-1 开关持有与复位判据 · P5-2 浮层门控 + 关闭按钮只在 absent + 卡片定位上下文 ·
+  P5-3 徽标可点态与轻闪判据 · P5-4 keyframes + reduced-motion 降级。
+- `extension/e2e/noservice-probe.mjs` 分母 10 → **13**：⑧ 关闭按钮存在 ·
+  ⑨ 点关闭 → 浮层消失 + 徽标带 `--pulsing` · ⑩ 点徽标重开（关闭可逆）。
+  **已实测 13/13**（真实 Chromium + 未打包扩展，截图落 `F:/tmp/miao-noservice/`）。
+- **反证 8 条**（脚本 `.temp-translate-test/p5-refute.sh`，各打红**指定**用例后按字节还原）：
+  M1 复位条件取反 → P5-1 · M2 控制器漏 return 开关 → P5-1 · M3 门控去 `!preparing` → P5-2 ·
+  M4 关闭按钮挪到 preparing 分支 → P5-2 · M5 徽标不再渲染为按钮 → P5-3 ·
+  M6 轻闪判据漏「已关」→ P5-3 · M7 动画换 `none` → P5-4 · M8 卡片丢 `position:relative` → P5-2。
+  8/8 打红 + 还原后全绿 + 四文件行尾复核全 CRLF。
+
+### 13.3 结果 / 修改文件
+
+- `tsc --noEmit` 0 错 · `npm test` **251/251**（+4）· `wxt build` 通过 · noservice 探针 **13/13**。
+- 修改：`src/panel/Panel.tsx`（门控 / 关闭按钮 / 徽标可点态）· `src/panel/controller.ts`
+  （`serviceOverlayDismissed` 开关 + 离开 absent 复位，阶段经 `mirror` 传入，控制器不读 store）·
+  `src/panel/panel.css`（`--pulsing` keyframes / `--overlay__close` / 按钮 UA 重置）·
+  `tests/s8-engine-states.test.ts` · `extension/e2e/noservice-probe.mjs` · `README.md` / `AGENTS.md`（基线同步）· 本文件。
+- ⚠️ **环境**：沙箱内 vitest 并行跑会有 worker EPERM（临时文件写不进）偶发丢文件 ⇒ 全量单测用
+  `--no-file-parallelism` 串行跑（13 文件 / 251 条全绿）；e2e 探针不受影响。

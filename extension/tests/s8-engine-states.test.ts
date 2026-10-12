@@ -75,8 +75,10 @@ const DECLARED_CASES = [
   'P3-1', 'P3-2', 'P3-3', 'P3-4',
   // P-4
   'P4-1', 'P4-2', 'P4-3', 'P4-4', 'P4-5', 'P4-6',
+  // P-5
+  'P5-1', 'P5-2', 'P5-3', 'P5-4',
 ] as const;
-const EXPECTED_CASE_COUNT = 27;
+const EXPECTED_CASE_COUNT = 31;
 
 /** 实际执行过的用例 id —— 跳过（skip）不会登记，末尾据此判「跳过 ≠ 通过」 */
 const executed: string[] = [];
@@ -414,6 +416,67 @@ describe('S8 P-4 删除 DEMO_BYPASS_SERVICE_READY', () => {
     expect(startup).toMatch(/'TASK_REFRESH'/);
     expect(startup).toMatch(/'TASK_WATCH_START', taskId: rec\.taskId, lastEventId: null/);
     expect(startup).toMatch(/'ACTIVE_TASK_CLEAR'/);
+  });
+});
+
+describe('S8 P-5 「未就绪浮层」可关闭 + 徽标轻闪可重开', () => {
+  caseIt('P5-1', '「浮层已关」开关由 controller 持有，且只在服务离开 absent 时复位', () => {
+    // 开关必须进 PanelViewState 并真的被 return —— 漏 return 时 Panel 侧读到 undefined，
+    // 关闭 / 重开两个按钮都变成哑的（且 TS 也拦不住：`undefined` 是真值域里的"假"）。
+    expect(controllerSrc).toMatch(/serviceOverlayDismissed: boolean;/);
+    expect(controllerSrc).toMatch(/setServiceOverlayDismissed: \(v: boolean\) => void;/);
+    expect(controllerSrc).toMatch(/setCancelOpen,\s*serviceOverlayDismissed,\s*setServiceOverlayDismissed,\s*menuKey,/);
+    // 复位判据必须是「**非** absent 才复位」。**反证位**：写成 `=== 'absent'` 会让
+    // absent → ready → absent 时浮层再也不弹（用户以为服务问题自愈了）。
+    expect(controllerSrc).toMatch(/if \(mirror\.servicePhase !== 'absent'\) setServiceOverlayDismissed\(false\);/);
+    // 阶段来自 `mirror`（控制器不读 store —— 与 selectedKeys/failedSeqs 同一口径）
+    expect(controllerSrc).toMatch(/servicePhase: ServicePhase;/);
+  });
+
+  caseIt('P5-2', '未就绪浮层可关：门控走 serviceOverlayOpen，关闭按钮**只在 absent 态**渲染', () => {
+    // 门控写成 `overlayCopy && serviceOverlayOpen`：两个条件都要，
+    // 前者是 TS 收窄（`serviceOverlayOpen` 是 boolean，收窄不了 `overlayCopy`）。
+    expect(panelSrc).toMatch(/\{overlayCopy && serviceOverlayOpen && \(/);
+    // dismissed 只封 absent：`!(dismissed && !preparing)` —— **反证位**：去掉 `!preparing`
+    // 会让「引擎准备中」也能被关掉（等于放行一个必然失败的操作）。
+    expect(panelSrc).toMatch(
+      /const serviceOverlayOpen = !!overlayCopy && !\(ctl\.serviceOverlayDismissed && !preparing\);/,
+    );
+    // 关闭按钮只在 `!preparing` 分支里；准备中浮层没有关闭入口
+    expect(panelSrc).toMatch(/\{!preparing && \(\s*<button[\s\S]{0,400}?data-testid="service-overlay-close"/);
+    expect(panelSrc).toMatch(/onClick=\{\(\) => ctl\.setServiceOverlayDismissed\(true\)\}/);
+    // 关闭按钮要浮在卡片右上角（卡片得先有定位上下文）
+    const cardBlock = /\.mt-overlay__card\s*\{[^}]*\}/s.exec(panelCss)?.[0] ?? '';
+    expect(cardBlock).toMatch(/position:\s*relative/);
+    const closeBlock = /\.mt-overlay__close\s*\{[^}]*\}/s.exec(panelCss)?.[0] ?? '';
+    expect(closeBlock).toMatch(/position:\s*absolute/);
+    expect(closeBlock).toMatch(/cursor:\s*pointer/);
+  });
+
+  caseIt('P5-3', '徽标未就绪时是**可聚焦按钮**（点它重开），轻闪类只在「已关」时挂', () => {
+    // 可重开 = 未就绪 && 非准备中。准备中浮层不给关 ⇒ 徽标自然也不可点。
+    expect(panelSrc).toMatch(/const serviceBadgeReopenable = !serviceReady && !preparing;/);
+    // 渲染成 `<button>` 而不是给 span 挂 onClick：键盘 / 读屏可达（span 会被 Tab 跳过）
+    expect(panelSrc).toMatch(/serviceBadgeReopenable \? \(\s*<button/);
+    expect(panelSrc).toMatch(/onClick=\{\(\) => ctl\.setServiceOverlayDismissed\(false\)\}/);
+    // 轻闪 = 可重开 **且** 已关。**反证位**：漏掉 `serviceOverlayDismissed`
+    // 会让浮层开着时徽标也在闪（自相矛盾的提示）。
+    expect(panelSrc).toMatch(
+      /const serviceBadgePulsing = serviceBadgeReopenable && ctl\.serviceOverlayDismissed;/,
+    );
+    expect(panelSrc).toMatch(/serviceBadgePulsing \? 'mt-panel__service--pulsing' : ''/);
+  });
+
+  caseIt('P5-4', '轻闪动效：box-shadow keyframes + `prefers-reduced-motion` 降级为静态外环', () => {
+    const block = /\.mt-panel__service--pulsing\s*\{[^}]*\}/s.exec(panelCss)?.[0] ?? '';
+    expect(block).toMatch(/animation:\s*mt-badge-pulse/);
+    // 动画必须是**边框外环**（box-shadow 扩散），而不是底色闪 —— 底色闪会盖住文字
+    const kf = /@keyframes\s+mt-badge-pulse\s*\{[\s\S]*?\n\}/.exec(panelCss)?.[0] ?? '';
+    expect(kf).toMatch(/box-shadow/);
+    // 无障碍：减弱动效时不许闪，但**提示不能丢**（换成静态外环）
+    const reduced = /@media \(prefers-reduced-motion: reduce\)\s*\{[\s\S]*?\n\}/.exec(panelCss)?.[0] ?? '';
+    expect(reduced).toMatch(/\.mt-panel__service--pulsing\s*\{[^}]*animation:\s*none/);
+    expect(reduced).toMatch(/box-shadow/);
   });
 });
 

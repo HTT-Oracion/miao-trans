@@ -65,7 +65,7 @@
 ```bash
 npm install            # 根 + extension（postinstall 装扩展依赖）
 npm run build          # 构建扩展 → extension/.output/chrome-mv3
-npm test               # 插件单测（vitest）—— 当前 247/247
+npm test               # 插件单测（vitest）—— 当前 251/251
 npm run verify         # 端到端验收（自起 mock + 漫画页夹具 + 扩展浏览器）—— 当前 30/30
 npm run mock           # 启动 mock box-service（默认 5180，打印配对令牌）
 npm run page           # 启动漫画页夹具（5199，含「追加 8 张 / SPA 换页 / 整页导航」）
@@ -77,7 +77,7 @@ cd extension && npx tsc --noEmit && npx wxt build   # 类型检查 / 构建
 ```bash
 npm run build
 node e2e/e9-real-engine.mjs              # 真实漫画站 31 张，19 条断言，约 10 分钟
-node extension/e2e/noservice-probe.mjs   # 「服务未就绪」路径，10/10（不启动 mock）
+node extension/e2e/noservice-probe.mjs   # 「服务未就绪」路径，13/13（不启动 mock）
 ```
 
 > 真机联调**先确认 5180 / 8000 / 8001 / 8080 无占用**；产物落 `.temp-translate-test/e9-<时间戳>/`，
@@ -92,7 +92,7 @@ node extension/e2e/noservice-probe.mjs   # 「服务未就绪」路径，10/10�
 - ver2.1 **英译中**已完成（D-11）：插件端加「翻译方向」分段控件（日译中 / 英译中，工具条内、不加高面板），
   方向随建单下发 `payload.lang`（契约层零改动）；白名单与服务端 `TRANSLATE_DIRECTIONS` 对齐，非法方向由
   服务端硬拒（400）。台账见 `docs/spec-notes.md` D-11。
-- **当前基线**：单测 **247/247** · 端到端（mock）**30/30** · 「服务未就绪」路径 **10/10** ·
+- **当前基线**：单测 **251/251** · 端到端（mock）**30/30** · 「服务未就绪」路径 **13/13** ·
   真机 E9 **19/0** · `tsc --noEmit` 干净 · `wxt build` 通过。
 - **历史的旧基线不改写**：ver1.0 完成时的 195/195、27/27 是当时事实，仍留在 `README.md` 里对照。
 - 未做项与延后项（歌手详情类 UI、真实后端等）**以 `miao-dock` 台账与本仓 `docs/spec-notes.md` 为准** ——

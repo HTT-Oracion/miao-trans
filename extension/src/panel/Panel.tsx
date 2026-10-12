@@ -109,6 +109,8 @@ export function Panel({
     eventsConnected,
     comicName: batch.comicName,
     direction,
+    // 只用于复位「浮层已关」（离开 absent 即复位）—— 渲染分流在本组件里
+    servicePhase,
   });
   const caps = capabilitiesOf(batch.state);
   const state: ClientState = batch.state;
@@ -116,6 +118,16 @@ export function Panel({
   /** 两态浮层文案：`ready` → null（无浮层）；`absent` → 服务未就绪；`preparing` → 引擎准备中 */
   const overlayCopy = serviceOverlayFor(servicePhase);
   const preparing = servicePhase === 'preparing';
+  /**
+   * 「服务未就绪」浮层可被用户关掉（首版不支持协议唤起，每次开面板都弹对有些人只是阻碍）。
+   * 🔴 只 absent 态可关：准备中浮层盖住面板是**故意的**（引擎没好时不该让人操作）。
+   * 关掉后面板头徽标边框轻闪提醒，点徽标可重开 —— 见 `serviceBadgePulsing`。
+   */
+  const serviceOverlayOpen = !!overlayCopy && !(ctl.serviceOverlayDismissed && !preparing);
+  /** 未就绪态下徽标可点击（重开浮层）；已就绪 / 准备中不可点 */
+  const serviceBadgeReopenable = !serviceReady && !preparing;
+  /** 未就绪 + 浮层已关 ⇒ 轻闪（"还有件事没处理"） */
+  const serviceBadgePulsing = serviceBadgeReopenable && ctl.serviceOverlayDismissed;
   /** 准备中浮层的**阶段副行**（《01》§4.1）——取不到阶段时为 null（不猜） */
   const preparingSub = preparingSubline(batch.enginePreparingState);
   /**
@@ -152,9 +164,36 @@ export function Panel({
           <strong className="mt-panel__title">喵译</strong>
           <span className="mt-panel__subtitle">漫画就地翻译</span>
         </div>
-        <span className={`mt-panel__service mt-panel__service--${serviceBadgeKind}`}>
-          {serviceBadge}
-        </span>
+        {/*
+          徽标三态同字，但**未就绪时可点**（重开被关掉的浮层，见 serviceOverlayDismissed）。
+          可点态渲染为 `<button>`：一是键盘可达（span 挂 onClick 会被 Tab 跳过），
+          二是语义正确。样式与 span 共用 `.mt-panel__service`，按钮 UA 底色在 CSS 里重置。
+        */}
+        {serviceBadgeReopenable ? (
+          <button
+            type="button"
+            className={[
+              'mt-panel__service',
+              `mt-panel__service--${serviceBadgeKind}`,
+              serviceBadgePulsing ? 'mt-panel__service--pulsing' : '',
+            ]
+              .filter(Boolean)
+              .join(' ')}
+            data-testid="service-badge"
+            aria-label={serviceBadgePulsing ? `${serviceBadge}，浮层已关闭，点击重新打开` : serviceBadge}
+            title={serviceBadgePulsing ? '浮层已关闭，点击重新打开' : undefined}
+            onClick={() => ctl.setServiceOverlayDismissed(false)}
+          >
+            {serviceBadge}
+          </button>
+        ) : (
+          <span
+            className={`mt-panel__service mt-panel__service--${serviceBadgeKind}`}
+            data-testid="service-badge"
+          >
+            {serviceBadge}
+          </span>
+        )}
         <button type="button" className="mt-iconbtn" aria-label="收起面板" onClick={onCollapse}>
           <IconClose size={14} />
         </button>
@@ -453,14 +492,34 @@ export function Panel({
         </div>
       </footer>
 
-      {/* ── 浮层：服务未就绪 / 引擎准备中（两态，不得混用 ——《01》§4.4 判据） ── */}
-      {overlayCopy && (
+      {/*
+        ── 浮层：服务未就绪 / 引擎准备中（两态，不得混用 ——《01》§4.4 判据） ──
+        「服务未就绪」可被用户关掉（`serviceOverlayOpen`），关掉后徽标轻闪可重开；
+        「引擎准备中」**不可关** —— 引擎没好时不该让人操作面板（见 PanelViewState 说明）。
+      */}
+      {overlayCopy && serviceOverlayOpen && (
         <div
           className="mt-overlay"
           data-testid={preparing ? 'engine-preparing' : 'service-not-ready'}
           data-phase={overlayCopy.phase}
         >
           <div className="mt-overlay__card">
+            {/*
+              只有「服务未就绪」给关闭按钮：准备中浮层盖住面板是**故意的**（引擎没好时
+              不该让人操作），关掉它等于放行一个必然失败的操作。
+            */}
+            {!preparing && (
+              <button
+                type="button"
+                className="mt-overlay__close"
+                data-testid="service-overlay-close"
+                aria-label="关闭"
+                title="关闭"
+                onClick={() => ctl.setServiceOverlayDismissed(true)}
+              >
+                <IconClose size={14} />
+              </button>
+            )}
             <img src={logoUrl(20)} alt="" width={20} height={20} />
             <h4>{overlayCopy.title}</h4>
             {/*

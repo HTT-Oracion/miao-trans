@@ -14,7 +14,7 @@ import { browser } from 'wxt/browser';
 import type { ItemDto, LibraryDto, ProgressDto, QueueDto, SseEnvelope, TaskCreatedDto, TaskDto } from '../types/contract';
 import { BATCH_LIMIT, BoxServiceError, SELECT_LIMIT, SSE_STALE_MS, SSE_WATCHDOG_TICK_MS, enginePreparingStateOf } from '../types/contract';
 import type { BgPush, BgRequest, BgResponse } from '../types/messages';
-import { isActive, type ClientState, ERROR_COPY } from '../domain/clientState';
+import { isActive, type ClientState, type ServicePhase, ERROR_COPY } from '../domain/clientState';
 import type { DirectionCode } from '../domain/direction';
 import { collectOrderedImages, type PageImage } from '../collectImages';
 import { registry } from '../store/registry';
@@ -79,6 +79,17 @@ export interface PanelViewState {
   setTokenInput: (v: string) => void;
   tokenDialogOpen: boolean;
   setTokenDialogOpen: (v: boolean) => void;
+  /**
+   * 「服务未就绪」浮层已被用户主动关闭。
+   *
+   * 为什么要这个开关：首版不支持协议唤起（P2-03），未就绪浮层会每次开面板都弹；
+   * 对"只想先看看面板"的人它是阻碍。关掉后**面板头徽标边框轻闪**提醒，点徽标可重开。
+   * 🔴 只对 `absent` 态生效 —— 「引擎准备中」浮层盖住面板是**故意的**（引擎没好时
+   *    不该让人操作），不给关。服务一旦恢复到非 absent，本开关自动复位（否则
+   *    absent→ready→absent 时浮层再也不弹）。
+   */
+  serviceOverlayDismissed: boolean;
+  setServiceOverlayDismissed: (v: boolean) => void;
   busy: boolean;
   /** 全选/刷新等动作的最近一次提示 */
   notice: string | null;
@@ -147,6 +158,11 @@ export function usePanelController(
     comicName: string;
     /** 翻译方向（ver2.1）—— 提交时随建单下发；重试沿用同一方向 */
     direction: DirectionCode;
+    /**
+     * 服务就绪阶段（ver2.0）—— 只用于**复位**「浮层已关」开关（离开 absent 就复位）。
+     * 渲染分流仍在 Panel.tsx（那边才是视图层）。
+     */
+    servicePhase: ServicePhase;
   },
 ): PanelController {
   const [previewKey, setPreviewKey] = useState<string | null>(null);
@@ -156,6 +172,8 @@ export function usePanelController(
   const [page, setPage] = useState(1);
   const [tokenInput, setTokenInput] = useState('');
   const [tokenDialogOpen, setTokenDialogOpen] = useState(false);
+  /** 「服务未就绪」浮层已关（见 PanelViewState 里的说明：只 absent 态有效，非 absent 自动复位） */
+  const [serviceOverlayDismissed, setServiceOverlayDismissed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -166,6 +184,15 @@ export function usePanelController(
   useEffect(() => {
     mirrorRef.current = mirror;
   });
+
+  /**
+   * 服务离开 `absent` 态 ⇒ 复位「浮层已关」。
+   * 不复位的后果：absent → ready → absent 时浮层再也不弹（用户以为服务问题自愈了），
+   * 而徽标也不再轻闪（dismissed 仍是 true）—— 两个提醒同时失效。
+   */
+  useEffect(() => {
+    if (mirror.servicePhase !== 'absent') setServiceOverlayDismissed(false);
+  }, [mirror.servicePhase]);
 
   /** 当前任务上下文 —— 放 ref 里，避免闭包捕获旧值 */
   const ctx = useRef<{
@@ -835,6 +862,8 @@ export function usePanelController(
     setOverLimitOpen,
     cancelOpen,
     setCancelOpen,
+    serviceOverlayDismissed,
+    setServiceOverlayDismissed,
     menuKey,
     setMenuKey,
     page,

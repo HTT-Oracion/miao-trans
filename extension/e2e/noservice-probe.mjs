@@ -16,9 +16,13 @@
  *       actionLabel 口径见 `domain/clientState.SERVICE_NOT_READY`
  *       + `.specConflict` P2-03）
  *   7. 令牌配对引导仍在（P0-3 保留行为）→ 关闭它之后浮层仍应存在
+ *   8. 未就绪浮层有**关闭按钮**（准备中态不给关 —— 那边关掉等于放行必然失败的操作）
+ *   9. 点关闭 → 浮层消失，但头徽标仍在并带轻闪类（`--pulsing`，「还有件事没处理」）
+ *  10. 点头徽标 → 浮层重开（关闭是可逆的，不是把提示永久丢掉）
  *
  * 证伪：把 P-4 的旁路语义加回去（探测不到时强制 `ready=true`）→ 第 2 / 5 条必失败。
  * （已实测，见交付报告。）
+ * 证伪（第 8–10 条）：去掉关闭按钮 / 去掉 `--pulsing` / 去掉徽标 onClick ⇒ 对应断言变红。
  *
  * 说明（避免误读）：background 的 `SERVICE_DISCOVER` 在「未发现服务」时返回
  * `ok({ready:false, hasToken:false})`，面板侧走 `serviceDiscovered({ready:false})`
@@ -39,7 +43,7 @@ const PAGE_PORT = 5199;
 const OUT = '/tmp/miao-noservice';
 
 /** 分母：本探针应执行的断言条数（写死；少一条即失败） */
-const TOTAL = 10;
+const TOTAL = 13;
 
 fs.rmSync(OUT, { recursive: true, force: true });
 fs.mkdirSync(OUT, { recursive: true });
@@ -96,6 +100,10 @@ try {
         preparing: !!sr?.querySelector('[data-testid="engine-preparing"]'),
         overlayTitle: overlay?.querySelector('h4')?.textContent?.trim() ?? null,
         badge: txt('.mt-panel__service'),
+        /** 未就绪浮层的关闭按钮（只在 absent 态有 —— 准备中态不给关） */
+        closeBtn: !!overlay?.querySelector('[data-testid="service-overlay-close"]'),
+        /** 被关掉后徽标要轻闪提醒（`--pulsing` 类即动画挂钩点） */
+        badgePulsing: !!sr?.querySelector('.mt-panel__service--pulsing'),
         overlayButtons: [...(overlay?.querySelectorAll('.mt-overlay__actions button') ?? [])].map((b) =>
           b.textContent.trim(),
         ),
@@ -124,6 +132,19 @@ try {
   const s2 = await snap();
   check('关闭配对引导后浮层仍在，且仍未就绪', s2.notReady && !s2.preparing);
   check('关闭配对引导后头徽标仍为「服务未就绪」', s2.badge === '服务未就绪');
+
+  // ── 未就绪浮层可关：关闭按钮 → 徽标轻闪 → 点徽标重开 ──
+  check('未就绪浮层有关闭按钮（只在 absent 态给关）', s2.closeBtn);
+  await page.locator('[data-testid="service-overlay-close"]').click();
+  await sleep(400);
+  const s3 = await snap();
+  check('点关闭后浮层消失，但徽标仍在且带轻闪类（--pulsing）', !s3.notReady && s3.badge === '服务未就绪' && s3.badgePulsing);
+  await page.screenshot({ path: `${OUT}/dismissed.png` });
+
+  await page.locator('[data-testid="service-badge"]').click();
+  await sleep(400);
+  const s4 = await snap();
+  check('点徽标可重开未就绪浮层（关闭是可逆的）', s4.notReady && !s4.preparing && !s4.badgePulsing);
 
   await page.screenshot({ path: `${OUT}/final.png` });
   await ctx.close();

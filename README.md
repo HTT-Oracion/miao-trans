@@ -82,11 +82,11 @@ a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90
 
 | 项 | 结果 |
 |---|---|
-| 插件单测 | **247/247**（ver2.1 英译中新增 `tests/direction.test.ts` 8 条 + 分母门，定位滚动新增 `tests/dom/scrollLocate.test.ts` 7 条 + 反证 4 条 + 分母门；此前 `s8-engine-states` 两态分流、选择上限 50 的 4 条、定位修复 10 条、zip 导出 11 条均已计入） |
+| 插件单测 | **251/251**（ver2.1 英译中新增 `tests/direction.test.ts` 8 条 + 分母门，定位滚动新增 `tests/dom/scrollLocate.test.ts` 7 条 + 反证 4 条 + 分母门；ver2.2 未就绪浮层可关闭新增 `s8-engine-states` P5 四条（分母 27→31）；此前 `s8-engine-states` 两态分流、选择上限 50 的 4 条、定位修复 10 条、zip 导出 11 条均已计入） |
 | 端到端验收（mock） | **30/30**（真实 Chromium + 未打包扩展，含像素级回写证明；ver2.1 新增 K1/K2 方向链路取证，并按 D-07 口径重写 H3/I 段失效断言） |
-| 「服务未就绪」路径 | `extension/e2e/noservice-probe.mjs` **10/10**（不启动 mock-service） |
+| 「服务未就绪」路径 | `extension/e2e/noservice-probe.mjs` **13/13**（不启动 mock-service；ver2.2 新增 3 条：浮层关闭按钮 / 关闭后徽标轻闪 / 点徽标重开） |
 | 真机联调 E9（真引擎） | **19/0**（真实漫画站 31 张；序号 001–031 连续、串行不交错、31 项全成功） |
 | `tsc --noEmit` / `wxt build` | 干净 / 通过 |
-| 反证 | S8 三条 + noservice 探针 4 项 FAIL + 选择上限 2 条（`SELECT_LIMIT`→20 变红 6 条、→40 变红 1 条）+ P4-5 收窄 3 条 + **ver2.1 方向链路 8 条**（单测 5：删白名单 / `sameDirection` 恒真 / 共享引用 / 去保留 / 剔 lang；e2e 3：控件不可见 / controller 不带 lang / background 丢 lang），各真跑变红后按字节还原 |
+| 反证 | S8 三条 + noservice 探针 4 项 FAIL + 选择上限 2 条（`SELECT_LIMIT`→20 变红 6 条、→40 变红 1 条）+ P4-5 收窄 3 条 + **ver2.1 方向链路 8 条**（单测 5：删白名单 / `sameDirection` 恒真 / 共享引用 / 去保留 / 剔 lang；e2e 3：控件不可见 / controller 不带 lang / background 丢 lang）+ **ver2.2 未就绪浮层 8 条**（M1 复位条件取反 / M2 漏 return 开关 / M3 门控去 `!preparing` / M4 关闭按钮挪到准备中 / M5 徽标不可点 / M6 轻闪漏「已关」/ M7 动画换 none / M8 卡片丢定位，各打红指定用例后按字节还原） |
 
 台账：`miao-dock/docs/spec-notes.md` 的 **D-77**；引擎侧逐项验收见 `miao-dock/docs/engine-e2e-acceptance-report.md` §2.9。

@@ -222,11 +222,23 @@
   color: var(--mt-muted);
 }
 .mt-panel__service {
+  font-family: inherit;
   font-size: 11px;
+  line-height: 1.4;
   padding: 2px 8px;
   border-radius: 999px;
   border: 1px solid var(--mt-line);
   color: var(--mt-ink-2);
+  /* 未就绪态该徽标是 `<button>`（点它重开浮层）—— 清掉 UA 底色/字体，与 span 同貌 */
+  background: none;
+  letter-spacing: normal;
+}
+button.mt-panel__service {
+  cursor: pointer;
+}
+button.mt-panel__service:focus-visible {
+  outline: 2px solid var(--mt-pink);
+  outline-offset: 2px;
 }
 .mt-panel__service--down {
   color: var(--mt-error);
@@ -236,6 +248,23 @@
 .mt-panel__service--preparing {
   color: var(--mt-warning);
   border-color: var(--mt-warning);
+}
+/**
+ * 未就绪 + 浮层被用户关掉 ⇒ 徽标边框轻闪，提醒「还有件事没处理」。
+ * 关掉浮层不等于问题消失，所以必须留一个**不挡操作**的持续提示；
+ * 点徽标可重开浮层（Panel.tsx `serviceBadgeReopenable`）。
+ */
+.mt-panel__service--pulsing {
+  animation: mt-badge-pulse 1.6s ease-in-out infinite;
+}
+@keyframes mt-badge-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--mt-error) 45%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--mt-error) 0%, transparent);
+  }
 }
 
 .mt-progressbar {
@@ -768,6 +797,7 @@
   background: color-mix(in srgb, var(--mt-board) 78%, transparent);
 }
 .mt-overlay__card {
+  position: relative;
   width: 280px;
   display: flex;
   flex-direction: column;
@@ -777,6 +807,32 @@
   background: var(--mt-surface);
   border: 1px solid var(--mt-line);
   box-shadow: 0 18px 40px -10px rgba(59, 51, 82, 0.24);
+}
+/* 浮层关闭（只「服务未就绪」态有 —— 准备中浮层不给关） */
+.mt-overlay__close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--mt-radius-sm);
+  background: none;
+  color: var(--mt-muted);
+  cursor: pointer;
+  transition: color 0.14s ease, border-color 0.14s ease;
+}
+.mt-overlay__close:hover {
+  color: var(--mt-ink);
+  border-color: var(--mt-line);
+}
+.mt-overlay__close:focus-visible {
+  outline: 2px solid var(--mt-pink);
+  outline-offset: 2px;
 }
 .mt-overlay__card h4 {
   margin: 0;
@@ -857,6 +913,11 @@
   .mt-ball__spin,
   .mt-thumb__statusspin {
     animation: none;
+  }
+  /* 徽标不再闪动，但**提示不能丢** —— 换成静态外环（同样是「还有件事没处理」） */
+  .mt-panel__service--pulsing {
+    animation: none;
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--mt-error) 35%, transparent);
   }
 }
 
