@@ -11,7 +11,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Dispatch, UnknownAction } from '@reduxjs/toolkit';
 import { browser } from 'wxt/browser';
 
-import type { ItemDto, LibraryDto, QueueDto, SseEnvelope, TaskCreatedDto, TaskDto } from '../types/contract';
+import type { ItemDto, LibraryDto, ProgressDto, QueueDto, SseEnvelope, TaskCreatedDto, TaskDto } from '../types/contract';
 import { BATCH_LIMIT, BoxServiceError, SELECT_LIMIT, SSE_STALE_MS, SSE_WATCHDOG_TICK_MS, enginePreparingStateOf } from '../types/contract';
 import type { BgPush, BgRequest, BgResponse } from '../types/messages';
 import { isActive, type ClientState, ERROR_COPY } from '../domain/clientState';
@@ -30,6 +30,22 @@ import { installRouteWatcher } from '../content/routeWatcher';
 import { uuidV4 } from '../adapters/boxServiceClient';
 
 // ─────────────────────────── 与 background 通信 ───────────────────────────
+
+/**
+ * `SseEnvelope.data` 的类型是 `Record<string, unknown>`，progress 必须过类型守卫
+ * 才可 dispatch（否则把任意对象塞进 `progressSet`，UI 会渲染出 NaN）。
+ *
+ * 四字段全校验（不是只查 total）：契约 `ProgressDto` 就是这四个数，缺一个就说明
+ * 服务端没按契约发 —— 那时**不猜**，整块忽略（进度条停在上一帧，比显示错数字好）。
+ */
+function isProgressDto(v: unknown): v is ProgressDto {
+  if (!v || typeof v !== 'object') return false;
+  const p = v as Partial<ProgressDto>;
+  return typeof p.total === 'number' && Number.isFinite(p.total)
+    && typeof p.done === 'number' && Number.isFinite(p.done)
+    && typeof p.failed === 'number' && Number.isFinite(p.failed)
+    && typeof p.current === 'number' && Number.isFinite(p.current);
+}
 
 export async function sendBg<T = unknown>(req: BgRequest): Promise<T> {
   const res = (await browser.runtime.sendMessage(req)) as BgResponse<T> | undefined;
@@ -243,6 +259,9 @@ export function usePanelController(
         const status = data.status as TaskDto['status'];
         const queuePosition = Number(data.queuePosition ?? 0);
         dispatch(batchActions.taskStatusEvent({ status, queuePosition }));
+        // §5.7：事件自带 progress 时透传 —— running 期间这是进度的主要来源
+        // （原先只有终态才拉全量，于是「已翻译数」一直停在建单那一刻的 0）。
+        if (isProgressDto(data.progress)) dispatch(batchActions.progressSet(data.progress));
         if (status === 'done' || status === 'partial_failed' || status === 'failed') {
           // 终态：拉一次全量，拿齐 items 与 progress（数字全部来自服务端）
           await refreshTask();
@@ -270,6 +289,8 @@ export function usePanelController(
           durationMs: data.durationMs as number | undefined,
         };
         dispatch(itemActions.itemStatusEvent(item));
+        // §5.7：每张图终态带一次进度快照（服务端下发）→ 透传，提示行的「已翻译数」才会动
+        if (isProgressDto(data.progress)) dispatch(batchActions.progressSet(data.progress));
         if (item.status === 'success') void writeOne(item);
         break;
       }

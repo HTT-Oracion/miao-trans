@@ -286,6 +286,10 @@ async function t4() {
   const r = await call(BASE_A, 'POST', '/tasks', { form: buildForm(['a.png', 'b.png', 'c.png', 'd.png'], { comicName: n('SSE 测试') }) });
   const taskId = r.body.taskId;
   console.log('   创建任务', taskId, 'status=', r.body.status);
+  // §5.7：建单响应必须带 progress —— 插件端 `t.progress ?? null`，缺字段提示行就退化成 0/0
+  check('建单响应带 progress（4 张 → total=4, done=0）',
+    r.body.progress && r.body.progress.total === 4 && r.body.progress.done === 0,
+    `progress=${brief(r.body.progress, 120)}`);
 
   const events = await readSse(`${BASE_A}/tasks/${taskId}/events`, {
     until: (ev) => ev.event === 'task.status' && ev.data && JSON.parse(ev.data).status === 'done',
@@ -298,6 +302,14 @@ async function t4() {
   console.log('   样例 item.status：', brief(itemEvents[itemEvents.length - 1], 200));
   check('收到 item.status 且 saved:true', itemEvents.some((e) => e.data.saved === true));
   check('收到 task.status=done', parsed.some((e) => e.event === 'task.status' && e.data.status === 'done'));
+  // §5.7：running 期间事件必须带 progress —— 否则「已翻译数」停在建单那一刻的 0
+  const withProgress = parsed.filter((e) => e.event === 'item.status' && e.data.progress
+    && typeof e.data.progress.total === 'number' && typeof e.data.progress.done === 'number');
+  check('item.status 事件带 progress（且 done 随进度增长）',
+    withProgress.length > 0 && withProgress[withProgress.length - 1].data.progress.done >= 4,
+    `末条=${brief(withProgress[withProgress.length - 1]?.data.progress, 120)}`);
+  const taskEv = parsed.find((e) => e.event === 'task.status' && e.data.status === 'done');
+  check('task.status 事件带 progress', !!(taskEv && taskEv.data.progress && taskEv.data.progress.total === 4));
   check('事件 id 递增', parsed.every((e, i) => i === 0 || e.id > parsed[i - 1].id));
 
   const mid = parsed[Math.floor(parsed.length / 2)].id;

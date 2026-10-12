@@ -620,6 +620,9 @@ export class Store {
       queuePosition: task.queuePosition,
       batches: task.batches.map(batchBrief),
       eta: this.etaFor(task),
+      // §5.7：建单响应**必须**带 progress。插件端 `t.progress ?? null`，缺字段即 null，
+      // 提示行会退化成 `0 / 0`（done/total 各 `?? 0`）—— 真实故障：翻译中一直显示 0/0。
+      progress: this.progressOf(task),
       createdAt: task.createdAt,
     };
   }
@@ -746,6 +749,9 @@ export class Store {
       taskId: task.taskId,
       status: task.status,
       queuePosition: task.queuePosition,
+      // §5.7：running 期间插件只有靠事件才能刷新进度（终态才拉全量，见 extension 的
+      // refreshTask）—— 不带 progress 就会停在建单那一刻的 `0 / N`。
+      progress: this.progressOf(task),
     });
   }
 
@@ -768,6 +774,9 @@ export class Store {
       saved: item.saved,
       outputFile: item.outputFile,
       durationMs: item.durationMs,
+      // §5.7：每张图的终态都带一次进度快照 —— 这是 running 中最细的刷新粒度，
+      // 插件据此把「已翻译数」推上去（不带就永远停在 0）。
+      progress: this.progressOf(task),
     });
   }
 
