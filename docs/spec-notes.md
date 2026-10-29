@@ -316,3 +316,11 @@
   新增中间一层：按 ORIGINAL_SRC_ATTR 反查已回写元素。
 - 验证：npm test 253/253（新增 L7 + 导出能力断言）；tsc --noEmit 0 错。
 - 反证：删掉 findRewrittenByOriginalUrl 那段 ⇒ L7 变红（已实测，字节还原）。
+## D-15 端口探测认不出宿主服务名（配对必现「服务未运行」）✅ 已完成
+
+- **根因**：`/health.service` 在宿主 F5 后由 Rust `mangasvc` 报 **manga-service**，
+  插件仍只认旧名 **box-service** ⇒ `discoverService` 永远不命中，
+  面板一律「本地翻译服务未运行」，**与令牌对错无关**。
+- **修法**：`SERVICE_NAME` 改 `manga-service`；新增 `isServiceName()` 同时兼容旧名，探测改用它。
+- **验证**：真机 `:5180/api/v1/health` 返回 `"service":"manga-service"`；`npm test` 254/254；`tsc` 0 错。
+- **反证**：常量改回 `box-service` ⇒ 新断言变红（已实测，字节还原）。
