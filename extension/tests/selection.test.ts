@@ -279,6 +279,19 @@ describe('《03》§4.4 + 《01》§7 逐态能力表', () => {
     expect(CAPABILITIES.running.openDir).toBe(true);
   });
 
+  /*
+   * 导出只看「有没有选中/提交过的图」，不看「译没译完」——
+   * 没译的页导出原图（服务端已落盘），`onExport` 会如实报「N 张尚无译文」。
+   * 只有 submitting / running 落盘未完时禁用。
+   */
+  it('导出不要求「已翻译」：idle / done / failed 可用，submitting / running 禁用', () => {
+    expect(CAPABILITIES.idle.export).toBe(true);
+    expect(CAPABILITIES.done.export).toBe(true);
+    expect(CAPABILITIES.failed.export).toBe(true);
+    expect(CAPABILITIES.submitting.export).toBe(false);
+    expect(CAPABILITIES.running.export).toBe(false);
+  });
+
   it('running：不可改选、不可改漫画名，但可滚动与 hover 预览', () => {
     expect(CAPABILITIES.running.select).toBe(false);
     expect(CAPABILITIES.running.comicName).toBe(false);

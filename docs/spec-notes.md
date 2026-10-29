@@ -306,3 +306,13 @@
   `tests/s8-engine-states.test.ts` · `extension/e2e/noservice-probe.mjs` · `README.md` / `AGENTS.md`（基线同步）· 本文件。
 - ⚠️ **环境**：沙箱内 vitest 并行跑会有 worker EPERM（临时文件写不进）偶发丢文件 ⇒ 全量单测用
   `--no-file-parallelism` 串行跑（13 文件 / 251 条全绿）；e2e 探针不受影响。
+
+## D-14 导出与定位两处行为修正（2026-10-30）✅ 已完成
+
+- **导出不再要求「已翻译」**：CAPABILITIES.export 在 idle / failed 改为 true（原先只有终态可用）。
+  判据改为「有没有提交过的图」，没译的页导出原图，onExport 会报「N 张尚无译文」。submitting / running 仍禁用（落盘未完）。
+- **翻译后定位失效（根因）**：resolveLocateTarget 的两级兜底对**已回写**的图都断：
+  ① 引用失效后走 ②，而 ② 的 findImageByExpectedUrl 跳过 MARK_ATTR 且比的是 src —— 回写后 src 已是 blob URL，必然不匹配。
+  新增中间一层：按 ORIGINAL_SRC_ATTR 反查已回写元素。
+- 验证：npm test 253/253（新增 L7 + 导出能力断言）；tsc --noEmit 0 错。
+- 反证：删掉 findRewrittenByOriginalUrl 那段 ⇒ L7 变红（已实测，字节还原）。

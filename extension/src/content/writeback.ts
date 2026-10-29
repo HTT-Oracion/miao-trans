@@ -312,18 +312,40 @@ export function locateImage(
 /**
  * 为「定位图片」解析当前应高亮的元素。
  *
- * 两级兜底，**顺序不能反**：
- *   ① 抓取时存下的元素引用 —— 最快，且已回写的图只有这条路能命中
- *      （回写后 src 变成 blob URL，`findImageByExpectedUrl` 会跳过它）
- *   ② 引用失效时（SPA 节点回收 / 懒加载重建）→ 按 `expectedUrl` 重新找
- *      这是 `findImageByExpectedUrl` 存在的理由，定位此前一直没用上它
+ * 三级兜底，**顺序不能反**：
+ *   ① 抓取时存下的元素引用 —— 最快，节点还在就直接用
+ *   ② 按 `originalSrc` 找回**已回写**的元素 —— 回写后 `src` 已是 blob，
+ *      `findImageByExpectedUrl` 会跳过它；但每个回写过的元素都存了 `data-miao-original-src`，
+ *      拿它比对原 URL 就能命中（**这条是"译完定位失效"的根因**）
+ *   ③ 未回写的图 → 按 `expectedUrl` 找
  */
 export function resolveLocateTarget(
   element: HTMLImageElement | undefined,
   expectedUrl: string | undefined,
 ): HTMLImageElement | null {
   if (element && element.isConnected) return element;
-  if (expectedUrl) return findImageByExpectedUrl(expectedUrl);
+  if (expectedUrl) {
+    const rewritten = findRewrittenByOriginalUrl(expectedUrl);
+    if (rewritten) return rewritten;
+    return findImageByExpectedUrl(expectedUrl);
+  }
+  return null;
+}
+
+/** 在**已回写**的图里按原始 URL 反查（回写时把原 src 记在 `ORIGINAL_SRC_ATTR`）。 */
+function findRewrittenByOriginalUrl(expectedUrl: string): HTMLImageElement | null {
+  for (const img of Array.from(document.querySelectorAll<HTMLImageElement>(`img[${MARK_ATTR}]`))) {
+    if (!img.isConnected) continue;
+    const original = img.getAttribute(ORIGINAL_SRC_ATTR);
+    if (!original) continue;
+    try {
+      if (new URL(original, 'http://127.0.0.1/').href === new URL(expectedUrl, 'http://127.0.0.1/').href) {
+        return img;
+      }
+    } catch {
+      if (original === expectedUrl) return img;
+    }
+  }
   return null;
 }
 

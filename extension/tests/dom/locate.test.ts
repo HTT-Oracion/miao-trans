@@ -13,13 +13,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   LOCATE_HIGHLIGHT_ATTR,
+  MARK_ATTR,
+  ORIGINAL_SRC_ATTR,
   findImageByExpectedUrl,
   locateImage,
   resolveLocateTarget,
 } from '../../src/content/writeback';
 
-const DECLARED_CASES = ['L1', 'L2', 'L3', 'L4', 'L5', 'L6'] as const;
-const EXPECTED_CASE_COUNT = 6;
+const DECLARED_CASES = ['L1', 'L2', 'L3', 'L4', 'L5', 'L6', 'L7'] as const;
+const EXPECTED_CASE_COUNT = 7;
 
 const executed: string[] = [];
 function caseIt(id: (typeof DECLARED_CASES)[number], title: string, fn: () => void): void {
@@ -121,6 +123,25 @@ describe('定位图片（分母钉死）', () => {
     stale.remove();
     expect(resolveLocateTarget(stale, '/nonexistent.png')).toBeNull();
     expect(resolveLocateTarget(undefined, undefined)).toBeNull();
+  });
+
+  caseIt('L7', '已回写（src 变 blob）的图，引用失效后仍能按 originalSrc 定位', () => {
+    // 原图节点先移除，保证只有"已回写"这一个节点带这个 URL —— 否则 ③ 号兜底也会命中它，
+    // 反证那半步就分不清命中的是新路径还是旧路径
+    const originalImg = makeImg('/f.png');
+    const original = originalImg.src;
+    originalImg.remove();
+
+    const rewritten = makeImg('blob:http://127.0.0.1/fake');
+    rewritten.setAttribute(MARK_ATTR, '1');
+    rewritten.setAttribute(ORIGINAL_SRC_ATTR, original);
+
+    const stale = document.createElement('img');
+    expect(resolveLocateTarget(stale, original)).toBe(rewritten);
+
+    // 反证：抹掉原 URL 记事 ⇒ 新路径失效，且 ③ 号兜底也找不到（此时没有任何 img 的 src 是这个 URL）
+    rewritten.removeAttribute(ORIGINAL_SRC_ATTR);
+    expect(resolveLocateTarget(stale, original)).toBeNull();
   });
 
   caseIt('L6', '原生 scrollIntoView 抛错也不影响高亮与返回（滚动由逐层兜底接管）', () => {

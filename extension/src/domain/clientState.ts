@@ -106,7 +106,7 @@ export const CAPABILITIES: Record<ClientState, StateCapabilities> = {
     openDir: false,
     retryFailed: false,
     continueNextBatch: false,
-    export: false,
+    export: true,
     locateImage: true,
   },
   submitting: {
@@ -199,7 +199,7 @@ export const CAPABILITIES: Record<ClientState, StateCapabilities> = {
     // §7：failed 的「重试 = 新建任务」，不是「重试失败项」
     retryFailed: false,
     continueNextBatch: true,
-    export: false,
+    export: true,
     locateImage: true,
   },
 };
