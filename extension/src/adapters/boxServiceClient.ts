@@ -18,7 +18,7 @@
 import {
   API_PREFIX,
   PORT_RANGE,
-  SERVICE_NAME,
+  isServiceName,
   BATCH_LIMIT,
   isApiErrorEnvelope,
   BoxServiceError,
@@ -100,7 +100,7 @@ export async function discoverService(
       clearTimeout(timer);
       if (!res.ok) continue;
       const body = (await res.json()) as HealthDto;
-      if (body?.service === SERVICE_NAME) {
+      if (isServiceName(body?.service)) {
         return { ok: true, service: { baseUrl, port, health: body } };
       }
     } catch {

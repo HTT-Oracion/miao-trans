@@ -13,7 +13,7 @@ import {
   probePorts,
   uuidV4,
 } from '../src/adapters/boxServiceClient';
-import { BoxServiceError, PORT_RANGE, SERVICE_NAME } from '../src/types/contract';
+import { BoxServiceError, PORT_RANGE, SERVICE_NAME, isServiceName } from '../src/types/contract';
 
 const TOKEN = 'a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90';
 
@@ -31,7 +31,7 @@ describe('《03》§8.3 端口探测握手', () => {
     expect(probePorts()[10]).toBe(PORT_RANGE.to);
   });
 
-  it('命中条件是 `service === "box-service"`，只看 200 会把别的本地服务误判', async () => {
+  it('命中条件是 service 名匹配，只看 200 会把别的本地服务误判', async () => {
     const fetchImpl = vi.fn(async (url: string) => {
       if (url.includes(':5181')) {
         // 恰好占用该端口的其他程序：200 但 service 不对
@@ -45,6 +45,28 @@ describe('《03》§8.3 端口探测握手', () => {
     const found = await discoverService({ ctx: { fetchImpl: fetchImpl as unknown as typeof fetch } });
     expect(found.ok).toBe(true);
     if (found.ok) expect(found.service.port).toBe(5182);
+  });
+
+  /*
+   * 宿主 F5 起服务是 Rust `mangasvc`，`/health.service` 报 `manga-service`。
+   * 这条钉住"新名必须认"，否则会退回「永远探不到、面板一直说服务未运行」。
+   * 同时钉住旧名仍兼容（还有机器在跑旧 Node 服务）。
+   */
+  it('认宿主当前的服务名（manga-service），并兼容旧名 box-service', async () => {
+    expect(SERVICE_NAME).toBe('manga-service');
+    expect(isServiceName('manga-service')).toBe(true);
+    expect(isServiceName('box-service')).toBe(true);
+    expect(isServiceName('some-other-service')).toBe(false);
+    expect(isServiceName(undefined)).toBe(false);
+
+    // 端到端：health 报 manga-service 时，探测真的命中
+    const fetchImpl = vi.fn(async (url: string) => {
+      if (url.includes(':5183')) return jsonResponse({ status: 'ok', service: 'manga-service' });
+      throw new TypeError('connect ECONNREFUSED');
+    });
+    const found = await discoverService({ ctx: { fetchImpl: fetchImpl as unknown as typeof fetch } });
+    expect(found.ok).toBe(true);
+    if (found.ok) expect(found.service.port).toBe(5183);
   });
 
   it('全段未命中 → 返回 triedPorts，由上层切「服务未就绪」态', async () => {

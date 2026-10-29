@@ -17,8 +17,23 @@ export const PORT_RANGE = { from: 5180, to: 5190 } as const;
 /** 《03》§2.1：Base URL 路径前缀（端口由探测决定） */
 export const API_PREFIX = '/api/v1';
 
-/** 《03》§1：健康检查应答里的服务标识 —— 端口探测的唯一命中条件 */
-export const SERVICE_NAME = 'box-service';
+/**
+ * 《03》§1：健康检查应答里的服务标识 —— 端口探测的命中条件。
+ *
+ * 🔴 2026-10-30：宿主（miao-dock）F5 起服务由 Rust `mangasvc` 实现，
+ * `/health.service` 报的是 **`manga-service`**（`mangasvc.rs::SERVICE_NAME`），
+ * 不再是旧 Node 实现的 `box-service`。只认旧名 ⇒ **永远探不到**，
+ * 面板一律显示「本地翻译服务未运行」，与令牌对错无关。
+ *
+ * 两个名字都收：旧名留着兼容仍在跑 Node 服务的机器。
+ */
+export const SERVICE_NAME = 'manga-service';
+export const LEGACY_SERVICE_NAMES = ['box-service'] as const;
+
+/** 端口探测的命中判据（新名 + 兼容旧名） */
+export function isServiceName(v: unknown): boolean {
+  return v === SERVICE_NAME || (LEGACY_SERVICE_NAMES as readonly unknown[]).includes(v);
+}
 
 /** 《03》§3：单次 API 请求携带的图片数上限。
  *  ⚠️ 它**不是**用户能选几张（那是 `SELECT_LIMIT`），也**不是**任务总量上限。 */
